@@ -1,0 +1,1345 @@
+Index: linux-6.18.44/Documentation/driver-api/media/v4l2-core.rst
+===================================================================
+--- linux-6.18.44.orig/Documentation/driver-api/media/v4l2-core.rst
++++ linux-6.18.44/Documentation/driver-api/media/v4l2-core.rst
+@@ -27,3 +27,4 @@ Video4Linux devices
+     v4l2-common
+     v4l2-tveeprom
+     v4l2-jpeg
++    v4l2-isp
+Index: linux-6.18.44/Documentation/driver-api/media/v4l2-isp.rst
+===================================================================
+--- /dev/null
++++ linux-6.18.44/Documentation/driver-api/media/v4l2-isp.rst
+@@ -0,0 +1,49 @@
++.. SPDX-License-Identifier: GPL-2.0
++
++V4L2 generic ISP parameters and statistics support
++^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
++
++Design rationale
++================
++
++ISP configuration parameters and statistics are processed and collected by
++drivers and exchanged with userspace through data types that usually
++reflect the ISP peripheral registers layout.
++
++Each ISP driver defines its own metadata output format for parameters and
++a metadata capture format for statistics. The buffer layout is realized by a
++set of C structures that reflects the registers layout. The number and types
++of C structures is fixed by the format definition and becomes part of the Linux
++kernel uAPI/uABI interface.
++
++Because of the hard requirement of backward compatibility when extending the
++user API/ABI interface, modifying an ISP driver capture or output metadata
++format after it has been accepted by mainline is very hard if not impossible.
++
++It generally happens, in fact, that after the first accepted revision of an ISP
++driver the buffers layout need to be modified, either to support new hardware
++blocks, to fix bugs or to support different revisions of the hardware.
++
++Each of these situations would require defining a new metadata format, making it
++really hard to maintain and extend drivers and requiring userspace to use
++the correct format depending on the kernel revision in use.
++
++V4L2 ISP configuration parameters
++=================================
++
++For these reasons, Video4Linux2 defines generic types for ISP configuration
++parameters and statistics. Drivers are still expected to define their own
++formats for their metadata output and capture nodes, but the buffers layout can
++be defined using the extensible and versioned types defined by
++include/uapi/linux/media/v4l2-isp.h.
++
++Drivers are expected to provide the definitions of their supported ISP blocks
++and the expected maximum size of a buffer.
++
++For driver developers a set of helper functions to assist them with validation
++of the buffer received from userspace is available in
++drivers/media/v4l2-core/v4l2-isp.c
++
++V4L2 ISP support driver documentation
++=====================================
++.. kernel-doc:: include/media/v4l2-isp.h
+Index: linux-6.18.44/Documentation/userspace-api/media/v4l/meta-formats.rst
+===================================================================
+--- linux-6.18.44.orig/Documentation/userspace-api/media/v4l/meta-formats.rst
++++ linux-6.18.44/Documentation/userspace-api/media/v4l/meta-formats.rst
+@@ -24,3 +24,4 @@ These formats are used for the :ref:`met
+     metafmt-vivid
+     metafmt-vsp1-hgo
+     metafmt-vsp1-hgt
++    v4l2-isp
+Index: linux-6.18.44/Documentation/userspace-api/media/v4l/v4l2-isp.rst
+===================================================================
+--- /dev/null
++++ linux-6.18.44/Documentation/userspace-api/media/v4l/v4l2-isp.rst
+@@ -0,0 +1,67 @@
++.. SPDX-License-Identifier: GFDL-1.1-no-invariants-or-later
++
++.. _v4l2-isp:
++
++************************
++Generic V4L2 ISP formats
++************************
++
++Generic ISP formats are metadata formats that define a mechanism to pass ISP
++parameters and statistics between userspace and drivers in V4L2 buffers. They
++are designed to allow extending them in a backward-compatible way.
++
++ISP parameters
++==============
++
++The generic ISP configuration parameters format is realized by a defining a
++single C structure that contains a header, followed by a binary buffer where
++userspace programs a variable number of ISP configuration data block, one for
++each supported ISP feature.
++
++The :c:type:`v4l2_isp_params_buffer` structure defines the buffer header which
++is followed by a binary buffer of ISP configuration data. Userspace shall
++correctly populate the buffer header with the generic parameters format version
++and with the size (in bytes) of the binary data buffer where it will store the
++ISP blocks configuration.
++
++Each *ISP configuration block* is preceded by an header implemented by the
++:c:type:`v4l2_isp_params_block_header` structure, followed by the configuration
++parameters for that specific block, defined by the ISP driver specific data
++types.
++
++Userspace applications are responsible for correctly populating each block's
++header fields (type, flags and size) and the block-specific parameters.
++
++ISP block enabling, disabling and configuration
++-----------------------------------------------
++
++When userspace wants to configure and enable an ISP block it shall fully
++populate the block configuration and set the V4L2_ISP_PARAMS_FL_BLOCK_ENABLE
++bit in the block header's `flags` field.
++
++When userspace simply wants to disable an ISP block the
++V4L2_ISP_PARAMS_FL_BLOCK_DISABLE bit should be set in block header's `flags`
++field. Drivers accept a configuration parameters block with no additional
++data after the header in this case.
++
++If the configuration of an already active ISP block has to be updated,
++userspace shall fully populate the ISP block parameters and omit setting the
++V4L2_ISP_PARAMS_FL_BLOCK_ENABLE and V4L2_ISP_PARAMS_FL_BLOCK_DISABLE bits in the
++header's `flags` field.
++
++Setting both the V4L2_ISP_PARAMS_FL_BLOCK_ENABLE and
++V4L2_ISP_PARAMS_FL_BLOCK_DISABLE bits in the flags field is not allowed and
++returns an error.
++
++Extension to the parameters format can be implemented by adding new blocks
++definition without invalidating the existing ones.
++
++ISP statistics
++==============
++
++Support for generic statistics format is not yet implemented in Video4Linux2.
++
++V4L2 ISP uAPI data types
++========================
++
++.. kernel-doc:: include/uapi/linux/media/v4l2-isp.h
+Index: linux-6.18.44/MAINTAINERS
+===================================================================
+--- linux-6.18.44.orig/MAINTAINERS
++++ linux-6.18.44/MAINTAINERS
+@@ -26926,6 +26926,16 @@ F:	drivers/media/i2c/vd55g1.c
+ F:	drivers/media/i2c/vd56g3.c
+ F:	drivers/media/i2c/vgxy61.c
+ 
++V4L2 GENERIC ISP PARAMETERS AND STATISTIC FORMATS
++M:	Jacopo Mondi <jacopo.mondi@ideasonboard.com>
++L:	linux-media@vger.kernel.org
++S:	Maintained
++F:	Documentation/driver-api/media/v4l2-isp.rst
++F:	Documentation/userspace-api/media/v4l/v4l2-isp.rst
++F:	drivers/media/v4l2-core/v4l2-isp.c
++F:	include/media/v4l2-isp.h
++F:	include/uapi/linux/media/v4l2-isp.h
++
+ VF610 NAND DRIVER
+ M:	Stefan Agner <stefan@agner.ch>
+ L:	linux-mtd@lists.infradead.org
+Index: linux-6.18.44/drivers/media/platform/amlogic/c3/isp/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/amlogic/c3/isp/Kconfig
++++ linux-6.18.44/drivers/media/platform/amlogic/c3/isp/Kconfig
+@@ -10,6 +10,7 @@ config VIDEO_C3_ISP
+ 	select VIDEO_V4L2_SUBDEV_API
+ 	select VIDEOBUF2_DMA_CONTIG
+ 	select VIDEOBUF2_VMALLOC
++	select V4L2_ISP
+ 	help
+ 	  Video4Linux2 driver for Amlogic C3 ISP pipeline.
+ 	  The C3 ISP is used for processing raw images and
+Index: linux-6.18.44/drivers/media/platform/amlogic/c3/isp/c3-isp-params.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/amlogic/c3/isp/c3-isp-params.c
++++ linux-6.18.44/drivers/media/platform/amlogic/c3/isp/c3-isp-params.c
+@@ -3,11 +3,13 @@
+  * Copyright (C) 2024 Amlogic, Inc. All rights reserved
+  */
+ 
++#include <linux/build_bug.h>
+ #include <linux/cleanup.h>
+ #include <linux/media/amlogic/c3-isp-config.h>
+ #include <linux/pm_runtime.h>
+ 
+ #include <media/v4l2-ioctl.h>
++#include <media/v4l2-isp.h>
+ #include <media/v4l2-mc.h>
+ #include <media/videobuf2-vmalloc.h>
+ 
+@@ -51,11 +53,6 @@ union c3_isp_params_block {
+ typedef void (*c3_isp_block_handler)(struct c3_isp_device *isp,
+ 				     const union c3_isp_params_block *block);
+ 
+-struct c3_isp_params_handler {
+-	size_t size;
+-	c3_isp_block_handler handler;
+-};
+-
+ #define to_c3_isp_params_buffer(vbuf) \
+ 	container_of(vbuf, struct c3_isp_params_buffer, vb)
+ 
+@@ -527,41 +524,36 @@ static void c3_isp_params_cfg_blc(struct
+ 				   ISP_TOP_BEO_CTRL_BLC_EN);
+ }
+ 
+-static const struct c3_isp_params_handler c3_isp_params_handlers[] = {
+-	[C3_ISP_PARAMS_BLOCK_AWB_GAINS] = {
+-		.size = sizeof(struct c3_isp_params_awb_gains),
+-		.handler = c3_isp_params_cfg_awb_gains,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_AWB_CONFIG] = {
+-		.size = sizeof(struct c3_isp_params_awb_config),
+-		.handler = c3_isp_params_cfg_awb_config,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_AE_CONFIG] = {
+-		.size = sizeof(struct c3_isp_params_ae_config),
+-		.handler = c3_isp_params_cfg_ae_config,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_AF_CONFIG] = {
+-		.size = sizeof(struct c3_isp_params_af_config),
+-		.handler = c3_isp_params_cfg_af_config,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_PST_GAMMA] = {
+-		.size = sizeof(struct c3_isp_params_pst_gamma),
+-		.handler = c3_isp_params_cfg_pst_gamma,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_CCM] = {
+-		.size = sizeof(struct c3_isp_params_ccm),
+-		.handler = c3_isp_params_cfg_ccm,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_CSC] = {
+-		.size = sizeof(struct c3_isp_params_csc),
+-		.handler = c3_isp_params_cfg_csc,
+-	},
+-	[C3_ISP_PARAMS_BLOCK_BLC] = {
+-		.size = sizeof(struct c3_isp_params_blc),
+-		.handler = c3_isp_params_cfg_blc,
+-	},
++static const c3_isp_block_handler c3_isp_params_handlers[] = {
++	[C3_ISP_PARAMS_BLOCK_AWB_GAINS] = c3_isp_params_cfg_awb_gains,
++	[C3_ISP_PARAMS_BLOCK_AWB_CONFIG] = c3_isp_params_cfg_awb_config,
++	[C3_ISP_PARAMS_BLOCK_AE_CONFIG] = c3_isp_params_cfg_ae_config,
++	[C3_ISP_PARAMS_BLOCK_AF_CONFIG] = c3_isp_params_cfg_af_config,
++	[C3_ISP_PARAMS_BLOCK_PST_GAMMA] = c3_isp_params_cfg_pst_gamma,
++	[C3_ISP_PARAMS_BLOCK_CCM] = c3_isp_params_cfg_ccm,
++	[C3_ISP_PARAMS_BLOCK_CSC] = c3_isp_params_cfg_csc,
++	[C3_ISP_PARAMS_BLOCK_BLC] = c3_isp_params_cfg_blc,
++};
++
++#define C3_ISP_PARAMS_BLOCK_INFO(block, data) \
++	[C3_ISP_PARAMS_BLOCK_ ## block] = { \
++		.size = sizeof(struct c3_isp_params_ ## data), \
++	}
++
++static const struct v4l2_isp_params_block_info c3_isp_params_blocks_info[] = {
++	C3_ISP_PARAMS_BLOCK_INFO(AWB_GAINS, awb_gains),
++	C3_ISP_PARAMS_BLOCK_INFO(AWB_CONFIG, awb_config),
++	C3_ISP_PARAMS_BLOCK_INFO(AE_CONFIG, ae_config),
++	C3_ISP_PARAMS_BLOCK_INFO(AF_CONFIG, af_config),
++	C3_ISP_PARAMS_BLOCK_INFO(PST_GAMMA, pst_gamma),
++	C3_ISP_PARAMS_BLOCK_INFO(CCM, ccm),
++	C3_ISP_PARAMS_BLOCK_INFO(CSC, csc),
++	C3_ISP_PARAMS_BLOCK_INFO(BLC, blc),
+ };
+ 
++static_assert(ARRAY_SIZE(c3_isp_params_handlers) ==
++	      ARRAY_SIZE(c3_isp_params_blocks_info));
++
+ static void c3_isp_params_cfg_blocks(struct c3_isp_params *params)
+ {
+ 	struct c3_isp_params_cfg *config = params->buff->cfg;
+@@ -572,14 +564,14 @@ static void c3_isp_params_cfg_blocks(str
+ 
+ 	/* Walk the list of parameter blocks and process them */
+ 	while (block_offset < config->data_size) {
+-		const struct c3_isp_params_handler *block_handler;
+ 		const union c3_isp_params_block *block;
++		c3_isp_block_handler block_handler;
+ 
+ 		block = (const union c3_isp_params_block *)
+ 			 &config->data[block_offset];
+ 
+-		block_handler = &c3_isp_params_handlers[block->header.type];
+-		block_handler->handler(params->isp, block);
++		block_handler = c3_isp_params_handlers[block->header.type];
++		block_handler(params->isp, block);
+ 
+ 		block_offset += block->header.size;
+ 	}
+@@ -775,26 +767,15 @@ static int c3_isp_params_vb2_buf_prepare
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+ 	struct c3_isp_params_buffer *buf = to_c3_isp_params_buffer(vbuf);
+ 	struct c3_isp_params *params = vb2_get_drv_priv(vb->vb2_queue);
+-	struct c3_isp_params_cfg *cfg = buf->cfg;
+ 	struct c3_isp_params_cfg *usr_cfg = vb2_plane_vaddr(vb, 0);
+ 	size_t payload_size = vb2_get_plane_payload(vb, 0);
+-	size_t header_size = offsetof(struct c3_isp_params_cfg, data);
+-	size_t block_offset = 0;
+-	size_t cfg_size;
+-
+-	/* Payload size can't be greater than the destination buffer size */
+-	if (payload_size > params->vfmt.fmt.meta.buffersize) {
+-		dev_dbg(params->isp->dev,
+-			"Payload size is too large: %zu\n", payload_size);
+-		return -EINVAL;
+-	}
++	struct c3_isp_params_cfg *cfg = buf->cfg;
++	int ret;
+ 
+-	/* Payload size can't be smaller than the header size */
+-	if (payload_size < header_size) {
+-		dev_dbg(params->isp->dev,
+-			"Payload size is too small: %zu\n", payload_size);
+-		return -EINVAL;
+-	}
++	ret = v4l2_isp_params_validate_buffer_size(params->isp->dev, vb,
++						   params->vfmt.fmt.meta.buffersize);
++	if (ret)
++		return ret;
+ 
+ 	/*
+ 	 * Use the internal scratch buffer to avoid userspace modifying
+@@ -802,70 +783,10 @@ static int c3_isp_params_vb2_buf_prepare
+ 	 */
+ 	memcpy(cfg, usr_cfg, payload_size);
+ 
+-	/* Only v0 is supported at the moment */
+-	if (cfg->version != C3_ISP_PARAMS_BUFFER_V0) {
+-		dev_dbg(params->isp->dev,
+-			"Invalid params buffer version: %u\n", cfg->version);
+-		return -EINVAL;
+-	}
+-
+-	/* Validate the size reported in the parameter buffer header */
+-	cfg_size = header_size + cfg->data_size;
+-	if (cfg_size != payload_size) {
+-		dev_dbg(params->isp->dev,
+-			"Data size %zu and payload size %zu are different\n",
+-			cfg_size, payload_size);
+-		return -EINVAL;
+-	}
+-
+-	/* Walk the list of parameter blocks and validate them */
+-	cfg_size = cfg->data_size;
+-	while (cfg_size >= sizeof(struct c3_isp_params_block_header)) {
+-		const struct c3_isp_params_block_header *block;
+-		const struct c3_isp_params_handler *handler;
+-
+-		block = (struct c3_isp_params_block_header *)
+-			&cfg->data[block_offset];
+-
+-		if (block->type >= ARRAY_SIZE(c3_isp_params_handlers)) {
+-			dev_dbg(params->isp->dev,
+-				"Invalid params block type\n");
+-			return -EINVAL;
+-		}
+-
+-		if (block->size > cfg_size) {
+-			dev_dbg(params->isp->dev,
+-				"Block size is greater than cfg size\n");
+-			return -EINVAL;
+-		}
+-
+-		if ((block->flags & (C3_ISP_PARAMS_BLOCK_FL_ENABLE |
+-				     C3_ISP_PARAMS_BLOCK_FL_DISABLE)) ==
+-		    (C3_ISP_PARAMS_BLOCK_FL_ENABLE |
+-		     C3_ISP_PARAMS_BLOCK_FL_DISABLE)) {
+-			dev_dbg(params->isp->dev,
+-				"Invalid parameters block flags\n");
+-			return -EINVAL;
+-		}
+-
+-		handler = &c3_isp_params_handlers[block->type];
+-		if (block->size != handler->size) {
+-			dev_dbg(params->isp->dev,
+-				"Invalid params block size\n");
+-			return -EINVAL;
+-		}
+-
+-		block_offset += block->size;
+-		cfg_size -= block->size;
+-	}
+-
+-	if (cfg_size) {
+-		dev_dbg(params->isp->dev,
+-			"Unexpected data after the params buffer end\n");
+-		return -EINVAL;
+-	}
+-
+-	return 0;
++	return v4l2_isp_params_validate_buffer(params->isp->dev, vb,
++					(struct v4l2_isp_params_buffer *)cfg,
++					c3_isp_params_blocks_info,
++					ARRAY_SIZE(c3_isp_params_blocks_info));
+ }
+ 
+ static int c3_isp_params_vb2_buf_init(struct vb2_buffer *vb)
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp1/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/rkisp1/Kconfig
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp1/Kconfig
+@@ -10,6 +10,7 @@ config VIDEO_ROCKCHIP_ISP1
+ 	select VIDEOBUF2_VMALLOC
+ 	select V4L2_FWNODE
+ 	select GENERIC_PHY_MIPI_DPHY
++	select V4L2_ISP
+ 	default n
+ 	help
+ 	  Enable this to support the Image Signal Processing (ISP) module
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp1/rkisp1-params.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/rkisp1/rkisp1-params.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp1/rkisp1-params.c
+@@ -6,12 +6,14 @@
+  */
+ 
+ #include <linux/bitfield.h>
++#include <linux/build_bug.h>
+ #include <linux/math.h>
+ #include <linux/string.h>
+ 
+ #include <media/v4l2-common.h>
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-ioctl.h>
++#include <media/v4l2-isp.h>
+ #include <media/videobuf2-core.h>
+ #include <media/videobuf2-vmalloc.h>	/* for ISP params */
+ 
+@@ -2091,122 +2093,132 @@ typedef void (*rkisp1_block_handler)(str
+ 			     const union rkisp1_ext_params_config *config);
+ 
+ static const struct rkisp1_ext_params_handler {
+-	size_t size;
+ 	rkisp1_block_handler handler;
+ 	unsigned int group;
+ 	unsigned int features;
+ } rkisp1_ext_params_handlers[] = {
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_BLS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_bls_config),
+ 		.handler	= rkisp1_ext_params_bls,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 		.features       = RKISP1_FEATURE_BLS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_DPCC] = {
+-		.size		= sizeof(struct rkisp1_ext_params_dpcc_config),
+ 		.handler	= rkisp1_ext_params_dpcc,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_SDG] = {
+-		.size		= sizeof(struct rkisp1_ext_params_sdg_config),
+ 		.handler	= rkisp1_ext_params_sdg,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_AWB_GAIN] = {
+-		.size		= sizeof(struct rkisp1_ext_params_awb_gain_config),
+ 		.handler	= rkisp1_ext_params_awbg,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_FLT] = {
+-		.size		= sizeof(struct rkisp1_ext_params_flt_config),
+ 		.handler	= rkisp1_ext_params_flt,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_BDM] = {
+-		.size		= sizeof(struct rkisp1_ext_params_bdm_config),
+ 		.handler	= rkisp1_ext_params_bdm,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_CTK] = {
+-		.size		= sizeof(struct rkisp1_ext_params_ctk_config),
+ 		.handler	= rkisp1_ext_params_ctk,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_GOC] = {
+-		.size		= sizeof(struct rkisp1_ext_params_goc_config),
+ 		.handler	= rkisp1_ext_params_goc,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_DPF] = {
+-		.size		= sizeof(struct rkisp1_ext_params_dpf_config),
+ 		.handler	= rkisp1_ext_params_dpf,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_DPF_STRENGTH] = {
+-		.size		= sizeof(struct rkisp1_ext_params_dpf_strength_config),
+ 		.handler	= rkisp1_ext_params_dpfs,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_CPROC] = {
+-		.size		= sizeof(struct rkisp1_ext_params_cproc_config),
+ 		.handler	= rkisp1_ext_params_cproc,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_IE] = {
+-		.size		= sizeof(struct rkisp1_ext_params_ie_config),
+ 		.handler	= rkisp1_ext_params_ie,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_LSC] = {
+-		.size		= sizeof(struct rkisp1_ext_params_lsc_config),
+ 		.handler	= rkisp1_ext_params_lsc,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_LSC,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_AWB_MEAS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_awb_meas_config),
+ 		.handler	= rkisp1_ext_params_awbm,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_HST_MEAS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_hst_config),
+ 		.handler	= rkisp1_ext_params_hstm,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_AEC_MEAS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_aec_config),
+ 		.handler	= rkisp1_ext_params_aecm,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_AFC_MEAS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_afc_config),
+ 		.handler	= rkisp1_ext_params_afcm,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_COMPAND_BLS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_compand_bls_config),
+ 		.handler	= rkisp1_ext_params_compand_bls,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 		.features	= RKISP1_FEATURE_COMPAND,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_COMPAND_EXPAND] = {
+-		.size		= sizeof(struct rkisp1_ext_params_compand_curve_config),
+ 		.handler	= rkisp1_ext_params_compand_expand,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 		.features	= RKISP1_FEATURE_COMPAND,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_COMPAND_COMPRESS] = {
+-		.size		= sizeof(struct rkisp1_ext_params_compand_curve_config),
+ 		.handler	= rkisp1_ext_params_compand_compress,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 		.features	= RKISP1_FEATURE_COMPAND,
+ 	},
+ 	[RKISP1_EXT_PARAMS_BLOCK_TYPE_WDR] = {
+-		.size		= sizeof(struct rkisp1_ext_params_wdr_config),
+ 		.handler	= rkisp1_ext_params_wdr,
+ 		.group		= RKISP1_EXT_PARAMS_BLOCK_GROUP_OTHERS,
+ 	},
+ };
+ 
++#define RKISP1_PARAMS_BLOCK_INFO(block, data) \
++	[RKISP1_EXT_PARAMS_BLOCK_TYPE_ ## block] = { \
++		.size = sizeof(struct rkisp1_ext_params_ ## data ## _config), \
++	}
++
++static const struct v4l2_isp_params_block_info rkisp1_ext_params_blocks_info[] = {
++	RKISP1_PARAMS_BLOCK_INFO(BLS, bls),
++	RKISP1_PARAMS_BLOCK_INFO(DPCC, dpcc),
++	RKISP1_PARAMS_BLOCK_INFO(SDG, sdg),
++	RKISP1_PARAMS_BLOCK_INFO(AWB_GAIN, awb_gain),
++	RKISP1_PARAMS_BLOCK_INFO(FLT, flt),
++	RKISP1_PARAMS_BLOCK_INFO(BDM, bdm),
++	RKISP1_PARAMS_BLOCK_INFO(CTK, ctk),
++	RKISP1_PARAMS_BLOCK_INFO(GOC, goc),
++	RKISP1_PARAMS_BLOCK_INFO(DPF, dpf),
++	RKISP1_PARAMS_BLOCK_INFO(DPF_STRENGTH, dpf_strength),
++	RKISP1_PARAMS_BLOCK_INFO(CPROC, cproc),
++	RKISP1_PARAMS_BLOCK_INFO(IE, ie),
++	RKISP1_PARAMS_BLOCK_INFO(LSC, lsc),
++	RKISP1_PARAMS_BLOCK_INFO(AWB_MEAS, awb_meas),
++	RKISP1_PARAMS_BLOCK_INFO(HST_MEAS, hst),
++	RKISP1_PARAMS_BLOCK_INFO(AEC_MEAS, aec),
++	RKISP1_PARAMS_BLOCK_INFO(AFC_MEAS, afc),
++	RKISP1_PARAMS_BLOCK_INFO(COMPAND_BLS, compand_bls),
++	RKISP1_PARAMS_BLOCK_INFO(COMPAND_EXPAND, compand_curve),
++	RKISP1_PARAMS_BLOCK_INFO(COMPAND_COMPRESS, compand_curve),
++	RKISP1_PARAMS_BLOCK_INFO(WDR, wdr),
++};
++
++static_assert(ARRAY_SIZE(rkisp1_ext_params_handlers) ==
++	      ARRAY_SIZE(rkisp1_ext_params_blocks_info));
++
+ static void rkisp1_ext_params_config(struct rkisp1_params *params,
+ 				     struct rkisp1_ext_params_cfg *cfg,
+ 				     u32 block_group_mask)
+@@ -2640,31 +2652,16 @@ static int rkisp1_params_prepare_ext_par
+ {
+ 	struct vb2_v4l2_buffer *vbuf = to_vb2_v4l2_buffer(vb);
+ 	struct rkisp1_params_buffer *params_buf = to_rkisp1_params_buffer(vbuf);
+-	size_t header_size = offsetof(struct rkisp1_ext_params_cfg, data);
+ 	struct rkisp1_ext_params_cfg *cfg = params_buf->cfg;
+ 	size_t payload_size = vb2_get_plane_payload(vb, 0);
+ 	struct rkisp1_ext_params_cfg *usr_cfg =
+ 		vb2_plane_vaddr(&vbuf->vb2_buf, 0);
+-	size_t block_offset = 0;
+-	size_t cfg_size;
++	int ret;
+ 
+-	/*
+-	 * Validate the buffer payload size before copying the parameters. The
+-	 * payload has to be smaller than the destination buffer size and larger
+-	 * than the header size.
+-	 */
+-	if (payload_size > params->metafmt->buffersize) {
+-		dev_dbg(params->rkisp1->dev,
+-			"Too large buffer payload size %zu\n", payload_size);
+-		return -EINVAL;
+-	}
+-
+-	if (payload_size < header_size) {
+-		dev_dbg(params->rkisp1->dev,
+-			"Buffer payload %zu smaller than header size %zu\n",
+-			payload_size, header_size);
+-		return -EINVAL;
+-	}
++	ret = v4l2_isp_params_validate_buffer_size(params->rkisp1->dev, vb,
++						   params->metafmt->buffersize);
++	if (ret)
++		return ret;
+ 
+ 	/*
+ 	 * Copy the parameters buffer to the internal scratch buffer to avoid
+@@ -2672,71 +2669,10 @@ static int rkisp1_params_prepare_ext_par
+ 	 */
+ 	memcpy(cfg, usr_cfg, payload_size);
+ 
+-	/* Only v1 is supported at the moment. */
+-	if (cfg->version != RKISP1_EXT_PARAM_BUFFER_V1) {
+-		dev_dbg(params->rkisp1->dev,
+-			"Unsupported extensible format version: %u\n",
+-			cfg->version);
+-		return -EINVAL;
+-	}
+-
+-	/* Validate the size reported in the parameters buffer header. */
+-	cfg_size = header_size + cfg->data_size;
+-	if (cfg_size != payload_size) {
+-		dev_dbg(params->rkisp1->dev,
+-			"Data size %zu different than buffer payload size %zu\n",
+-			cfg_size, payload_size);
+-		return -EINVAL;
+-	}
+-
+-	/* Walk the list of parameter blocks and validate them. */
+-	cfg_size = cfg->data_size;
+-	while (cfg_size >= sizeof(struct rkisp1_ext_params_block_header)) {
+-		const struct rkisp1_ext_params_block_header *block;
+-		const struct rkisp1_ext_params_handler *handler;
+-
+-		block = (const struct rkisp1_ext_params_block_header *)
+-			&cfg->data[block_offset];
+-
+-		if (block->type >= ARRAY_SIZE(rkisp1_ext_params_handlers)) {
+-			dev_dbg(params->rkisp1->dev,
+-				"Invalid parameters block type\n");
+-			return -EINVAL;
+-		}
+-
+-		if (block->size > cfg_size) {
+-			dev_dbg(params->rkisp1->dev,
+-				"Premature end of parameters data\n");
+-			return -EINVAL;
+-		}
+-
+-		if ((block->flags & (RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE |
+-				     RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE)) ==
+-		   (RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE |
+-		    RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE)) {
+-			dev_dbg(params->rkisp1->dev,
+-				"Invalid parameters block flags\n");
+-			return -EINVAL;
+-		}
+-
+-		handler = &rkisp1_ext_params_handlers[block->type];
+-		if (block->size != handler->size) {
+-			dev_dbg(params->rkisp1->dev,
+-				"Invalid parameters block size\n");
+-			return -EINVAL;
+-		}
+-
+-		block_offset += block->size;
+-		cfg_size -= block->size;
+-	}
+-
+-	if (cfg_size) {
+-		dev_dbg(params->rkisp1->dev,
+-			"Unexpected data after the parameters buffer end\n");
+-		return -EINVAL;
+-	}
+-
+-	return 0;
++	return v4l2_isp_params_validate_buffer(params->rkisp1->dev, vb,
++				(struct v4l2_isp_params_buffer *)cfg,
++				rkisp1_ext_params_blocks_info,
++				ARRAY_SIZE(rkisp1_ext_params_blocks_info));
+ }
+ 
+ static int rkisp1_params_vb2_buf_prepare(struct vb2_buffer *vb)
+Index: linux-6.18.44/drivers/media/v4l2-core/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/v4l2-core/Kconfig
++++ linux-6.18.44/drivers/media/v4l2-core/Kconfig
+@@ -82,3 +82,7 @@ config V4L2_CCI_I2C
+ 	depends on I2C
+ 	select REGMAP_I2C
+ 	select V4L2_CCI
++
++config V4L2_ISP
++	tristate
++	depends on VIDEOBUF2_CORE
+Index: linux-6.18.44/drivers/media/v4l2-core/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/media/v4l2-core/Makefile
++++ linux-6.18.44/drivers/media/v4l2-core/Makefile
+@@ -29,6 +29,7 @@ obj-$(CONFIG_V4L2_CCI) += v4l2-cci.o
+ obj-$(CONFIG_V4L2_FLASH_LED_CLASS) += v4l2-flash-led-class.o
+ obj-$(CONFIG_V4L2_FWNODE) += v4l2-fwnode.o
+ obj-$(CONFIG_V4L2_H264) += v4l2-h264.o
++obj-$(CONFIG_V4L2_ISP) += v4l2-isp.o
+ obj-$(CONFIG_V4L2_JPEG_HELPER) += v4l2-jpeg.o
+ obj-$(CONFIG_V4L2_MEM2MEM_DEV) += v4l2-mem2mem.o
+ obj-$(CONFIG_V4L2_VP9) += v4l2-vp9.o
+Index: linux-6.18.44/drivers/media/v4l2-core/v4l2-isp.c
+===================================================================
+--- /dev/null
++++ linux-6.18.44/drivers/media/v4l2-core/v4l2-isp.c
+@@ -0,0 +1,128 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Video4Linux2 generic ISP parameters and statistics support
++ *
++ * Copyright (C) 2025 Ideas On Board Oy
++ * Author: Jacopo Mondi <jacopo.mondi@ideasonboard.com>
++ */
++
++#include <media/v4l2-isp.h>
++
++#include <linux/bitops.h>
++#include <linux/device.h>
++
++#include <media/videobuf2-core.h>
++
++int v4l2_isp_params_validate_buffer_size(struct device *dev,
++					 struct vb2_buffer *vb,
++					 size_t max_size)
++{
++	size_t header_size = offsetof(struct v4l2_isp_params_buffer, data);
++	size_t payload_size = vb2_get_plane_payload(vb, 0);
++
++	/* Payload size can't be greater than the destination buffer size */
++	if (payload_size > max_size) {
++		dev_dbg(dev, "Payload size is too large: %zu\n", payload_size);
++		return -EINVAL;
++	}
++
++	/* Payload size can't be smaller than the header size */
++	if (payload_size < header_size) {
++		dev_dbg(dev, "Payload size is too small: %zu\n", payload_size);
++		return -EINVAL;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(v4l2_isp_params_validate_buffer_size);
++
++int v4l2_isp_params_validate_buffer(struct device *dev, struct vb2_buffer *vb,
++				    const struct v4l2_isp_params_buffer *buffer,
++				    const struct v4l2_isp_params_block_info *info,
++				    size_t num_blocks)
++{
++	size_t header_size = offsetof(struct v4l2_isp_params_buffer, data);
++	size_t payload_size = vb2_get_plane_payload(vb, 0);
++	size_t block_offset = 0;
++	size_t buffer_size;
++
++	/*
++	 * Currently only the first version of the V4L2 ISP parameters format is
++	 * supported. We accept both V0 and V1 to support existing drivers
++	 * compatible with V4L2 ISP that use either 0 or 1 as their "first
++	 * version" identifiers.
++	 */
++	if (buffer->version != V4L2_ISP_PARAMS_VERSION_V0 &&
++	    buffer->version != V4L2_ISP_PARAMS_VERSION_V1) {
++		dev_dbg(dev,
++			"Unsupported V4L2 ISP parameters format version: %u\n",
++			buffer->version);
++		return -EINVAL;
++	}
++
++	/* Validate the size reported in the header */
++	buffer_size = header_size + buffer->data_size;
++	if (buffer_size != payload_size) {
++		dev_dbg(dev, "Data size %zu and payload size %zu are different\n",
++			buffer_size, payload_size);
++		return -EINVAL;
++	}
++
++	/* Walk the list of ISP configuration blocks and validate them. */
++	buffer_size = buffer->data_size;
++	while (buffer_size >= sizeof(struct v4l2_isp_params_block_header)) {
++		const struct v4l2_isp_params_block_info *block_info;
++		const struct v4l2_isp_params_block_header *block;
++
++		block = (const struct v4l2_isp_params_block_header *)
++			(buffer->data + block_offset);
++
++		if (block->type >= num_blocks) {
++			dev_dbg(dev,
++				"Invalid block type %u at offset %zu\n",
++				block->type, block_offset);
++			return -EINVAL;
++		}
++
++		if (block->size > buffer_size) {
++			dev_dbg(dev, "Premature end of parameters data\n");
++			return -EINVAL;
++		}
++
++		/* It's invalid to specify both ENABLE and DISABLE. */
++		if ((block->flags & (V4L2_ISP_PARAMS_FL_BLOCK_ENABLE |
++				     V4L2_ISP_PARAMS_FL_BLOCK_DISABLE)) ==
++		     (V4L2_ISP_PARAMS_FL_BLOCK_ENABLE |
++		     V4L2_ISP_PARAMS_FL_BLOCK_DISABLE)) {
++			dev_dbg(dev, "Invalid block flags %x at offset %zu\n",
++				block->flags, block_offset);
++			return -EINVAL;
++		}
++
++		/*
++		 * Match the block reported size against the info provided
++		 * one, but allow the block to only contain the header in
++		 * case it is going to be disabled.
++		 */
++		block_info = &info[block->type];
++		if (block->size != block_info->size &&
++		    (!(block->flags & V4L2_ISP_PARAMS_FL_BLOCK_DISABLE) ||
++		    block->size != sizeof(*block))) {
++			dev_dbg(dev,
++				"Invalid block size %u (expected %zu) at offset %zu\n",
++				block->size, block_info->size, block_offset);
++			return -EINVAL;
++		}
++
++		block_offset += block->size;
++		buffer_size -= block->size;
++	}
++
++	if (buffer_size) {
++		dev_dbg(dev, "Unexpected data after the parameters buffer end\n");
++		return -EINVAL;
++	}
++
++	return 0;
++}
++EXPORT_SYMBOL_GPL(v4l2_isp_params_validate_buffer);
+Index: linux-6.18.44/include/media/v4l2-isp.h
+===================================================================
+--- /dev/null
++++ linux-6.18.44/include/media/v4l2-isp.h
+@@ -0,0 +1,91 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++/*
++ * Video4Linux2 generic ISP parameters and statistics support
++ *
++ * Copyright (C) 2025 Ideas On Board Oy
++ * Author: Jacopo Mondi <jacopo.mondi@ideasonboard.com>
++ */
++
++#ifndef _V4L2_ISP_H_
++#define _V4L2_ISP_H_
++
++#include <linux/media/v4l2-isp.h>
++
++struct device;
++struct vb2_buffer;
++
++/**
++ * v4l2_isp_params_buffer_size - Calculate size of v4l2_isp_params_buffer
++ * @max_params_size: The total size of the ISP configuration blocks
++ *
++ * Users of the v4l2 extensible parameters will have differing sized data arrays
++ * depending on their specific parameter buffers. Drivers and userspace will
++ * need to be able to calculate the appropriate size of the struct to
++ * accommodate all ISP configuration blocks provided by the platform.
++ * This macro provides a convenient tool for the calculation.
++ */
++#define v4l2_isp_params_buffer_size(max_params_size) \
++	(offsetof(struct v4l2_isp_params_buffer, data) + (max_params_size))
++
++/**
++ * v4l2_isp_params_validate_buffer_size - Validate a V4L2 ISP buffer sizes
++ * @dev: the driver's device pointer
++ * @vb: the videobuf2 buffer
++ * @max_size: the maximum allowed buffer size
++ *
++ * This function performs validation of the size of a V4L2 ISP parameters buffer
++ * before the driver can access the actual data buffer content.
++ *
++ * After the sizes validation, drivers should copy the buffer content to a
++ * kernel-only memory area to prevent userspace from modifying it,
++ * before completing validation using v4l2_isp_params_validate_buffer().
++ *
++ * The @vb buffer as received from the vb2 .buf_prepare() operation is checked
++ * against @max_size and it's validated to be large enough to accommodate at
++ * least one ISP configuration block.
++ */
++int v4l2_isp_params_validate_buffer_size(struct device *dev,
++					 struct vb2_buffer *vb,
++					 size_t max_size);
++
++/**
++ * struct v4l2_isp_params_block_info - V4L2 ISP per-block info
++ * @size: the block expected size
++ *
++ * The v4l2_isp_params_block_info collects information of the ISP configuration
++ * blocks for validation purposes. It currently only contains the expected
++ * block size.
++ *
++ * Drivers shall prepare a list of block info, indexed by block type, one for
++ * each supported ISP block and correctly populate them with the expected block
++ * size.
++ */
++struct v4l2_isp_params_block_info {
++	size_t size;
++};
++
++/**
++ * v4l2_isp_params_validate_buffer - Validate a V4L2 ISP parameters buffer
++ * @dev: the driver's device pointer
++ * @vb: the videobuf2 buffer
++ * @buffer: the V4L2 ISP parameters buffer
++ * @info: the list of per-block validation info
++ * @num_blocks: the number of blocks
++ *
++ * This function completes the validation of a V4L2 ISP parameters buffer,
++ * verifying each configuration block correctness before the driver can use
++ * them to program the hardware.
++ *
++ * Drivers should use this function after having validated the correctness of
++ * the vb2 buffer sizes by using the v4l2_isp_params_validate_buffer_size()
++ * helper first. Once the buffer size has been validated, drivers should
++ * perform a copy of the user provided buffer into a kernel-only memory buffer
++ * to prevent userspace from modifying its content after it has been submitted
++ * to the driver, and then call this function to complete validation.
++ */
++int v4l2_isp_params_validate_buffer(struct device *dev, struct vb2_buffer *vb,
++				    const struct v4l2_isp_params_buffer *buffer,
++				    const struct v4l2_isp_params_block_info *info,
++				    size_t num_blocks);
++
++#endif /* _V4L2_ISP_H_ */
+Index: linux-6.18.44/include/uapi/linux/media/amlogic/c3-isp-config.h
+===================================================================
+--- linux-6.18.44.orig/include/uapi/linux/media/amlogic/c3-isp-config.h
++++ linux-6.18.44/include/uapi/linux/media/amlogic/c3-isp-config.h
+@@ -6,8 +6,13 @@
+ #ifndef _UAPI_C3_ISP_CONFIG_H_
+ #define _UAPI_C3_ISP_CONFIG_H_
+ 
++#ifdef __KERNEL__
++#include <linux/build_bug.h>
++#endif /* __KERNEL__ */
+ #include <linux/types.h>
+ 
++#include <linux/media/v4l2-isp.h>
++
+ /*
+  * Frames are split into zones of almost equal width and height - a zone is a
+  * rectangular tile of a frame. The metering blocks within the ISP collect
+@@ -141,7 +146,7 @@ struct c3_isp_stats_info {
+  * @C3_ISP_PARAMS_BUFFER_V0: First version of C3 ISP parameters block
+  */
+ enum c3_isp_params_buffer_version {
+-	C3_ISP_PARAMS_BUFFER_V0,
++	C3_ISP_PARAMS_BUFFER_V0 = V4L2_ISP_PARAMS_VERSION_V0,
+ };
+ 
+ /**
+@@ -176,62 +181,23 @@ enum c3_isp_params_block_type {
+ 	C3_ISP_PARAMS_BLOCK_SENTINEL
+ };
+ 
+-#define C3_ISP_PARAMS_BLOCK_FL_DISABLE (1U << 0)
+-#define C3_ISP_PARAMS_BLOCK_FL_ENABLE (1U << 1)
++/* For backward compatibility */
++#define C3_ISP_PARAMS_BLOCK_FL_DISABLE	V4L2_ISP_PARAMS_FL_BLOCK_DISABLE
++#define C3_ISP_PARAMS_BLOCK_FL_ENABLE	V4L2_ISP_PARAMS_FL_BLOCK_ENABLE
+ 
+ /**
+  * struct c3_isp_params_block_header - C3 ISP parameter block header
+  *
+  * This structure represents the common part of all the ISP configuration
+- * blocks. Each parameters block shall embed an instance of this structure type
+- * as its first member, followed by the block-specific configuration data. The
+- * driver inspects this common header to discern the block type and its size and
+- * properly handle the block content by casting it to the correct block-specific
+- * type.
++ * blocks and is identical to :c:type:`v4l2_isp_params_block_header`.
+  *
+- * The @type field is one of the values enumerated by
++ * The type field is one of the values enumerated by
+  * :c:type:`c3_isp_params_block_type` and specifies how the data should be
+- * interpreted by the driver. The @size field specifies the size of the
+- * parameters block and is used by the driver for validation purposes. The
+- * @flags field is a bitmask of per-block flags C3_ISP_PARAMS_FL*.
+- *
+- * When userspace wants to disable an ISP block the
+- * C3_ISP_PARAMS_BLOCK_FL_DISABLED bit should be set in the @flags field. In
+- * this case userspace may optionally omit the remainder of the configuration
+- * block, which will be ignored by the driver.
+- *
+- * When a new configuration of an ISP block needs to be applied userspace
+- * shall fully populate the ISP block and omit setting the
+- * C3_ISP_PARAMS_BLOCK_FL_DISABLED bit in the @flags field.
+- *
+- * Userspace is responsible for correctly populating the parameters block header
+- * fields (@type, @flags and @size) and the block-specific parameters.
+- *
+- * For example:
+- *
+- * .. code-block:: c
+- *
+- *	void populate_pst_gamma(struct c3_isp_params_block_header *block) {
+- *		struct c3_isp_params_pst_gamma *gamma =
+- *			(struct c3_isp_params_pst_gamma *)block;
+- *
+- *		gamma->header.type = C3_ISP_PARAMS_BLOCK_PST_GAMMA;
+- *		gamma->header.flags = C3_ISP_PARAMS_BLOCK_FL_ENABLE;
+- *		gamma->header.size = sizeof(*gamma);
+- *
+- *		for (unsigned int i = 0; i < 129; i++)
+- *			gamma->pst_gamma_lut[i] = i;
+- *	}
+- *
+- * @type: The parameters block type from :c:type:`c3_isp_params_block_type`
+- * @flags: A bitmask of block flags
+- * @size: Size (in bytes) of the parameters block, including this header
+- */
+-struct c3_isp_params_block_header {
+-	__u16 type;
+-	__u16 flags;
+-	__u32 size;
+-};
++ * interpreted by the driver.
++ *
++ * The flags field is a bitmask of per-block flags C3_ISP_PARAMS_FL_*.
++ */
++#define c3_isp_params_block_header v4l2_isp_params_block_header
+ 
+ /**
+  * struct c3_isp_params_awb_gains - Gains for auto-white balance
+@@ -498,26 +464,10 @@ struct c3_isp_params_blc {
+ /**
+  * struct c3_isp_params_cfg - C3 ISP configuration parameters
+  *
+- * This struct contains the configuration parameters of the C3 ISP
+- * algorithms, serialized by userspace into an opaque data buffer. Each
+- * configuration parameter block is represented by a block-specific structure
+- * which contains a :c:type:`c3_isp_param_block_header` entry as first
+- * member. Userspace populates the @data buffer with configuration parameters
+- * for the blocks that it intends to configure. As a consequence, the data
+- * buffer effective size changes according to the number of ISP blocks that
+- * userspace intends to configure.
+- *
+- * The parameters buffer is versioned by the @version field to allow modifying
+- * and extending its definition. Userspace should populate the @version field to
+- * inform the driver about the version it intends to use. The driver will parse
+- * and handle the @data buffer according to the data layout specific to the
+- * indicated revision and return an error if the desired revision is not
+- * supported.
+- *
+- * For each ISP block that userspace wants to configure, a block-specific
+- * structure is appended to the @data buffer, one after the other without gaps
+- * in between nor overlaps. Userspace shall populate the @total_size field with
+- * the effective size, in bytes, of the @data buffer.
++ * This is the driver-specific implementation of
++ * :c:type:`v4l2_isp_params_buffer`.
++ *
++ * Currently only C3_ISP_PARAM_BUFFER_V0 is supported.
+  *
+  * The expected memory layout of the parameters buffer is::
+  *
+@@ -561,4 +511,10 @@ struct c3_isp_params_cfg {
+ 	__u8 data[C3_ISP_PARAMS_MAX_SIZE];
+ };
+ 
++#ifdef __KERNEL__
++/* Make sure the header is type-convertible to the generic v4l2 params one */
++static_assert((sizeof(struct c3_isp_params_cfg) - C3_ISP_PARAMS_MAX_SIZE) ==
++	      sizeof(struct v4l2_isp_params_buffer));
++#endif /* __KERNEL__ */
++
+ #endif
+Index: linux-6.18.44/include/uapi/linux/media/v4l2-isp.h
+===================================================================
+--- /dev/null
++++ linux-6.18.44/include/uapi/linux/media/v4l2-isp.h
+@@ -0,0 +1,102 @@
++/* SPDX-License-Identifier: GPL-2.0 WITH Linux-syscall-note */
++/*
++ * Video4Linux2 generic ISP parameters and statistics support
++ *
++ * Copyright (C) 2025 Ideas On Board Oy
++ * Author: Jacopo Mondi <jacopo.mondi@ideasonboard.com>
++ */
++
++#ifndef _UAPI_V4L2_ISP_H_
++#define _UAPI_V4L2_ISP_H_
++
++#include <linux/stddef.h>
++#include <linux/types.h>
++
++/**
++ * enum v4l2_isp_params_version - V4L2 ISP parameters versioning
++ *
++ * @V4L2_ISP_PARAMS_VERSION_V0: First version of the V4L2 ISP parameters format
++ *				(for compatibility)
++ * @V4L2_ISP_PARAMS_VERSION_V1: First version of the V4L2 ISP parameters format
++ *
++ * V0 and V1 are identical in order to support drivers compatible with the V4L2
++ * ISP parameters format already upstreamed which use either 0 or 1 as their
++ * versioning identifier. Both V0 and V1 refers to the first version of the
++ * V4L2 ISP parameters format.
++ *
++ * Future revisions of the V4L2 ISP parameters format should start from the
++ * value of 2.
++ */
++enum v4l2_isp_params_version {
++	V4L2_ISP_PARAMS_VERSION_V0 = 0,
++	V4L2_ISP_PARAMS_VERSION_V1
++};
++
++#define V4L2_ISP_PARAMS_FL_BLOCK_DISABLE	(1U << 0)
++#define V4L2_ISP_PARAMS_FL_BLOCK_ENABLE		(1U << 1)
++
++/*
++ * Reserve the first 8 bits for V4L2_ISP_PARAMS_FL_* flag.
++ *
++ * Driver-specific flags should be defined as:
++ * #define DRIVER_SPECIFIC_FLAG0     ((1U << V4L2_ISP_PARAMS_FL_DRIVER_FLAGS(0))
++ * #define DRIVER_SPECIFIC_FLAG1     ((1U << V4L2_ISP_PARAMS_FL_DRIVER_FLAGS(1))
++ */
++#define V4L2_ISP_PARAMS_FL_DRIVER_FLAGS(n)       ((n) + 8)
++
++/**
++ * struct v4l2_isp_params_block_header - V4L2 extensible parameters block header
++ * @type: The parameters block type (driver-specific)
++ * @flags: A bitmask of block flags (driver-specific)
++ * @size: Size (in bytes) of the parameters block, including this header
++ *
++ * This structure represents the common part of all the ISP configuration
++ * blocks. Each parameters block shall embed an instance of this structure type
++ * as its first member, followed by the block-specific configuration data.
++ *
++ * The @type field is an ISP driver-specific value that identifies the block
++ * type. The @size field specifies the size of the parameters block.
++ *
++ * The @flags field is a bitmask of per-block flags V4L2_PARAMS_ISP_FL_* and
++ * driver-specific flags specified by the driver header.
++ */
++struct v4l2_isp_params_block_header {
++	__u16 type;
++	__u16 flags;
++	__u32 size;
++} __attribute__((aligned(8)));
++
++/**
++ * struct v4l2_isp_params_buffer - V4L2 extensible parameters configuration
++ * @version: The parameters buffer version (driver-specific)
++ * @data_size: The configuration data effective size, excluding this header
++ * @data: The configuration data
++ *
++ * This structure contains the configuration parameters of the ISP algorithms,
++ * serialized by userspace into a data buffer. Each configuration parameter
++ * block is represented by a block-specific structure which contains a
++ * :c:type:`v4l2_isp_params_block_header` entry as first member. Userspace
++ * populates the @data buffer with configuration parameters for the blocks that
++ * it intends to configure. As a consequence, the data buffer effective size
++ * changes according to the number of ISP blocks that userspace intends to
++ * configure and is set by userspace in the @data_size field.
++ *
++ * The parameters buffer is versioned by the @version field to allow modifying
++ * and extending its definition. Userspace shall populate the @version field to
++ * inform the driver about the version it intends to use. The driver will parse
++ * and handle the @data buffer according to the data layout specific to the
++ * indicated version and return an error if the desired version is not
++ * supported.
++ *
++ * For each ISP block that userspace wants to configure, a block-specific
++ * structure is appended to the @data buffer, one after the other without gaps
++ * in between. Userspace shall populate the @data_size field with the effective
++ * size, in bytes, of the @data buffer.
++ */
++struct v4l2_isp_params_buffer {
++	__u32 version;
++	__u32 data_size;
++	__u8 data[] __counted_by(data_size);
++};
++
++#endif /* _UAPI_V4L2_ISP_H_ */
+Index: linux-6.18.44/include/uapi/linux/rkisp1-config.h
+===================================================================
+--- linux-6.18.44.orig/include/uapi/linux/rkisp1-config.h
++++ linux-6.18.44/include/uapi/linux/rkisp1-config.h
+@@ -7,8 +7,13 @@
+ #ifndef _UAPI_RKISP1_CONFIG_H
+ #define _UAPI_RKISP1_CONFIG_H
+ 
++#ifdef __KERNEL__
++#include <linux/build_bug.h>
++#endif /* __KERNEL__ */
+ #include <linux/types.h>
+ 
++#include <linux/media/v4l2-isp.h>
++
+ /* Defect Pixel Cluster Detection */
+ #define RKISP1_CIF_ISP_MODULE_DPCC		(1U << 0)
+ /* Black Level Subtraction */
+@@ -1158,79 +1163,26 @@ enum rkisp1_ext_params_block_type {
+ 	RKISP1_EXT_PARAMS_BLOCK_TYPE_WDR,
+ };
+ 
+-#define RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE	(1U << 0)
+-#define RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE	(1U << 1)
++/* For backward compatibility */
++#define RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE	V4L2_ISP_PARAMS_FL_BLOCK_DISABLE
++#define RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE	V4L2_ISP_PARAMS_FL_BLOCK_ENABLE
+ 
+ /* A bitmask of parameters blocks supported on the current hardware. */
+ #define RKISP1_CID_SUPPORTED_PARAMS_BLOCKS	(V4L2_CID_USER_RKISP1_BASE + 0x01)
+ 
+ /**
+- * struct rkisp1_ext_params_block_header - RkISP1 extensible parameters block
+- *					   header
++ * rkisp1_ext_params_block_header - RkISP1 extensible parameters block header
+  *
+  * This structure represents the common part of all the ISP configuration
+- * blocks. Each parameters block shall embed an instance of this structure type
+- * as its first member, followed by the block-specific configuration data. The
+- * driver inspects this common header to discern the block type and its size and
+- * properly handle the block content by casting it to the correct block-specific
+- * type.
++ * blocks and is identical to :c:type:`v4l2_isp_params_block_header`.
+  *
+- * The @type field is one of the values enumerated by
++ * The type field is one of the values enumerated by
+  * :c:type:`rkisp1_ext_params_block_type` and specifies how the data should be
+- * interpreted by the driver. The @size field specifies the size of the
+- * parameters block and is used by the driver for validation purposes.
+- *
+- * The @flags field is a bitmask of per-block flags RKISP1_EXT_PARAMS_FL_*.
++ * interpreted by the driver.
+  *
+- * When userspace wants to configure and enable an ISP block it shall fully
+- * populate the block configuration and set the
+- * RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE bit in the @flags field.
+- *
+- * When userspace simply wants to disable an ISP block the
+- * RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE bit should be set in @flags field. The
+- * driver ignores the rest of the block configuration structure in this case.
+- *
+- * If a new configuration of an ISP block has to be applied userspace shall
+- * fully populate the ISP block configuration and omit setting the
+- * RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE and RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE bits
+- * in the @flags field.
+- *
+- * Setting both the RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE and
+- * RKISP1_EXT_PARAMS_FL_BLOCK_DISABLE bits in the @flags field is not allowed
+- * and not accepted by the driver.
+- *
+- * Userspace is responsible for correctly populating the parameters block header
+- * fields (@type, @flags and @size) and the block-specific parameters.
+- *
+- * For example:
+- *
+- * .. code-block:: c
+- *
+- *	void populate_bls(struct rkisp1_ext_params_block_header *block) {
+- *		struct rkisp1_ext_params_bls_config *bls =
+- *			(struct rkisp1_ext_params_bls_config *)block;
+- *
+- *		bls->header.type = RKISP1_EXT_PARAMS_BLOCK_ID_BLS;
+- *		bls->header.flags = RKISP1_EXT_PARAMS_FL_BLOCK_ENABLE;
+- *		bls->header.size = sizeof(*bls);
+- *
+- *		bls->config.enable_auto = 0;
+- *		bls->config.fixed_val.r = blackLevelRed_;
+- *		bls->config.fixed_val.gr = blackLevelGreenR_;
+- *		bls->config.fixed_val.gb = blackLevelGreenB_;
+- *		bls->config.fixed_val.b = blackLevelBlue_;
+- *	}
+- *
+- * @type: The parameters block type, see
+- *	  :c:type:`rkisp1_ext_params_block_type`
+- * @flags: A bitmask of block flags
+- * @size: Size (in bytes) of the parameters block, including this header
+- */
+-struct rkisp1_ext_params_block_header {
+-	__u16 type;
+-	__u16 flags;
+-	__u32 size;
+-};
++ * The flags field is a bitmask of per-block flags RKISP1_EXT_PARAMS_FL_*.
++ */
++#define rkisp1_ext_params_block_header v4l2_isp_params_block_header
+ 
+ /**
+  * struct rkisp1_ext_params_bls_config - RkISP1 extensible params BLS config
+@@ -1588,7 +1540,7 @@ struct rkisp1_ext_params_wdr_config {
+  * @RKISP1_EXT_PARAM_BUFFER_V1: First version of RkISP1 extensible parameters
+  */
+ enum rkisp1_ext_param_buffer_version {
+-	RKISP1_EXT_PARAM_BUFFER_V1 = 1,
++	RKISP1_EXT_PARAM_BUFFER_V1 = V4L2_ISP_PARAMS_VERSION_V1,
+ };
+ 
+ /**
+@@ -1624,11 +1576,6 @@ enum rkisp1_ext_param_buffer_version {
+  * the maximum value represents the blocks supported by the kernel driver,
+  * independently of the device instance.
+  *
+- * For each ISP block that userspace wants to configure, a block-specific
+- * structure is appended to the @data buffer, one after the other without gaps
+- * in between nor overlaps. Userspace shall populate the @data_size field with
+- * the effective size, in bytes, of the @data buffer.
+- *
+  * The expected memory layout of the parameters buffer is::
+  *
+  *	+-------------------- struct rkisp1_ext_params_cfg -------------------+
+@@ -1678,4 +1625,11 @@ struct rkisp1_ext_params_cfg {
+ 	__u8 data[RKISP1_EXT_PARAMS_MAX_SIZE];
+ };
+ 
++#ifdef __KERNEL__
++/* Make sure the header is type-convertible to the generic v4l2 params one */
++static_assert((sizeof(struct rkisp1_ext_params_cfg) -
++	      RKISP1_EXT_PARAMS_MAX_SIZE) ==
++	      sizeof(struct v4l2_isp_params_buffer));
++#endif /* __KERNEL__ */
++
+ #endif /* _UAPI_RKISP1_CONFIG_H */

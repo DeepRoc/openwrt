@@ -1,0 +1,1137 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Copyright (c) 2021 Rockchip Electronics Co., Ltd.
+ * Copyright (c) 2023 Thomas McKahan
+ * Copyright (c) 2024 Sebastian Kropatsch
+ *
+ */
+
+/dts-v1/;
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/pinctrl/rockchip.h>
+#include <dt-bindings/soc/rockchip,vop2.h>
+#include <dt-bindings/usb/pd.h>
+#include <dt-bindings/leds/common.h>
+
+#include "rk3588-friendlyelec-cm3588.dtsi"
+#include "rk3588-rkvenc-mpp.dtsi"
+
+/ {
+	model = "FriendlyElec CM3588 GMSL";
+	compatible = "friendlyarm,cm3588-gmsl", "friendlyarm,cm3588", "rockchip,rk3588";
+
+	adc_key_recovery: adc-key-recovery {
+		compatible = "adc-keys";
+		io-channels = <&saradc 1>;
+		io-channel-names = "buttons";
+		keyup-threshold-microvolt = <1800000>;
+		poll-interval = <100>;
+
+		button-recovery {
+			label = "Recovery";
+			linux,code = <KEY_VENDOR>;
+			press-threshold-microvolt = <17000>;
+		};
+	};
+
+	analog-sound {
+		compatible = "simple-audio-card";
+
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "realtek,rt5616-codec";
+
+		simple-audio-card,routing =
+			"Headphones", "HPOL",
+			"Headphones", "HPOR",
+			"MIC1", "Microphone Jack",
+			"Microphone Jack", "micbias1";
+		simple-audio-card,widgets =
+			"Headphone", "Headphones",
+			"Microphone", "Microphone Jack";
+
+		simple-audio-card,cpu {
+			sound-dai = <&i2s0_8ch>;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&rt5616>;
+		};
+	};
+
+	gpio_keys: gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&key1_pin>;
+
+		button-user {
+			debounce-interval = <50>;
+			gpios = <&gpio0 RK_PD5 GPIO_ACTIVE_LOW>;
+			label = "User Button";
+			linux,code = <BTN_1>;
+			wakeup-source;
+		};
+	};
+
+	vcc_12v_dcin: regulator-vcc-12v-dcin {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_12v_dcin";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <12000000>;
+		regulator-max-microvolt = <12000000>;
+	};
+
+	vcc_3v3_m2_a: regulator-vcc-3v3-m2-a {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3_m2_a";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_12v_dcin>;
+	};
+
+	vcc_3v3_m2_b: regulator-vcc-3v3-m2-b {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3_m2_b";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_12v_dcin>;
+	};
+
+	vcc_3v3_m2_c: regulator-vcc-3v3-m2-c {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3_m2_c";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_12v_dcin>;
+	};
+
+	vcc_3v3_m2_d: regulator-vcc-3v3-m2-d {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_3v3_m2_d";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		vin-supply = <&vcc_12v_dcin>;
+	};
+
+	/* vcc_5v0_sys powers the peripherals */
+	vcc_5v0_sys: regulator-vcc-5v0-sys {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc_5v0_sys";
+		regulator-always-on;
+		regulator-boot-on;
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_12v_dcin>;
+	};
+
+	/* SY6280AAC power switch (U14 in schematics) */
+	vcc_5v0_host_20: regulator-vcc-5v0-host-20 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio1 RK_PA4 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc_5v0_host20_en>;
+		regulator-name = "vcc_5v0_host_20";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_5v0_sys>;
+	};
+
+	/* SY6280AAC power switch (U8 in schematics) */
+	vcc_5v0_host_30_p1: regulator-vcc-5v0-host-30-p1 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio4 RK_PB0 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc_5v0_host30p1_en>;
+		regulator-name = "vcc_5v0_host_30_p1";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_5v0_sys>;
+	};
+
+	/* SY6280AAC power switch (U9 in schematics) */
+	vcc_5v0_host_30_p2: regulator-vcc-5v0-host-30-p2 {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio3 RK_PA5 GPIO_ACTIVE_HIGH>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&vcc_5v0_host30p2_en>;
+		regulator-name = "vcc_5v0_host_30_p2";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_5v0_sys>;
+	};
+
+	/* SY6280AAC power switch (U10 in schematics) */
+	vbus_5v0_typec: regulator-vbus-5v0-typec {
+		compatible = "regulator-fixed";
+		enable-active-high;
+		gpios = <&gpio1 RK_PD2 GPIO_ACTIVE_HIGH>;
+                regulator-always-on;
+                regulator-boot-on;
+		pinctrl-names = "default";
+		pinctrl-0 = <&typec_5v_pwr_en>;
+		regulator-name = "vbus_5v0_typec";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		vin-supply = <&vcc_5v0_sys>;
+	};
+
+	v12p0_poc: v12p0-poc-regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "v12p0_poc";
+		regulator-min-microvolt = <12000000>;
+		regulator-max-microvolt = <12000000>;
+		regulator-always-on;
+	};
+};
+
+/* vcc_4v0_sys powers the RK806 and RK860's */
+&vcc_4v0_sys {
+	vin-supply = <&vcc_12v_dcin>;
+};
+
+/* Combo PHY 1 is configured to act as as PCIe 2.0 PHY */
+/* Used by PCIe controller 2 (pcie2x1l0) */
+&combphy1_ps {
+	status = "okay";
+};
+
+/* Combo PHY 2 is configured to act as USB3 PHY */
+/* Used by USB 3.0 OTG 2 controller (USB 3.0 Type-A port 2) */
+/* CM3588 USB Controller Config Table: USB30 HOST2 */
+&combphy2_psu {
+	status = "okay";
+};
+
+/* GPIO names are in the format "Human-readable-name [SIGNAL_LABEL]" */
+/* Signal labels match the official CM3588 NAS SDK schematic revision 2309 */
+&gpio0 {
+	gpio-line-names =
+		/* GPIO0 A0-A7 */
+		"", "", "", "",
+		"MicroSD detect [SDMMC_DET_L]", "", "", "",
+		/* GPIO0 B0-B7 */
+		"", "", "", "",
+		"", "", "", "",
+		/* GPIO0 C0-C7 */
+		"", "", "", "",
+		"Pin 10 [UART0_RX_M0]", "Pin 08 [UART0_TX_M0]", "", "",
+		/* GPIO0 D0-D7 */
+		"", "", "", "USB3 Type-C [CC_INT_L]",
+		"", "User Button", "", "";
+};
+
+&gpio1 {
+	gpio-line-names =
+		/* GPIO1 A0-A7 */
+		"Pin 27 [UART6_RX_M1]", "Pin 28 [UART6_TX_M1]", "", "",
+		"USB2 Type-A [USB2_PWREN]", "", "", "Pin 15",
+		/* GPIO1 B0-B7 */
+		"Pin 26", "Pin 21 [SPI0_MISO_M2]", "Pin 19 [SPI0_MOSI_M2/UART4_RX_M2]", "Pin 23 [SPI0_CLK_M2/UART4_TX_M2]",
+		"Pin 24 [SPI0_CS0_M2/UART7_RX_M2]", "Pin 22 [SPI0_CS1_M0/UART7_TX_M2]", "", "CSI-Pin 14 [MIPI_CAM2_CLKOUT]",
+		/* GPIO1 C0-C7 */
+		"", "", "", "",
+		"Headphone detect [HP_DET_L]", "", "", "",
+		/* GPIO1 D0-D7 */
+		"", "", "USB3 Type-C [TYPEC5V_PWREN_H]", "",
+		"", "HDMI-in detect [HDMIIRX_DET_L]", "Pin 05 [I2C8_SCL_M2]", "Pin 03 [I2C8_SDA_M2]";
+};
+
+&gpio2 {
+	gpio-line-names =
+		/* GPIO2 A0-A7 */
+		"", "", "", "",
+		"", "", "SPI NOR Flash [FSPI_D0_M1]", "SPI NOR Flash [FSPI_D1_M1]",
+		/* GPIO2 B0-B7 */
+		"SPI NOR Flash [FSPI_D2_M1]", "SPI NOR Flash [FSPI_D3_M1]", "", "SPI NOR Flash [FSPI_CLK_M1]",
+		"SPI NOR Flash [FSPI_CSN0_M1]", "", "", "",
+		/* GPIO2 C0-C7 */
+		"", "CSI-Pin 11 [MIPI_CAM2_RESET_L]", "CSI-Pin 12 [MIPI_CAM2_PDN_L]", "",
+		"", "", "", "",
+		/* GPIO2 D0-D7 */
+		"", "", "", "",
+		"", "", "", "";
+};
+
+&gpio3 {
+	gpio-line-names =
+		/* GPIO3 A0-A7 */
+		"Pin 35 [SPI4_MISO_M1]", "Pin 38 [SPI4_MOSI_M1]", "Pin 40 [SPI4_CLK_M1/UART8_TX_M1]", "Pin 36 [SPI4_CS0_M1/UART8_RX_M1]",
+		"Pin 37 [SPI4_CS1_M1]", "USB3-A #2 [USB3_2_PWREN]", "DSI-Pin 12 [LCD_RST]", "",
+		/* GPIO3 B0-B7 */
+		"", "DSI-Pin 10 [LCD_BL]", "Pin 07", "Pin 16",
+		"Pin 18", "Pin 29 [UART3_TX_M1]", "Pin 31 [UART3_RX_M1]", "Pin 12",
+		/* GPIO3 C0-C7 */
+		"DSI-Pin 08 [TP_INT_L]", "DSI-Pin 14 [TP_RST_L]", "Pin 11", "Pin 13",
+		"", "", "", "DSI-Pin 06 [I2C5_SCL_M0_TP]",
+		/* GPIO3 D0-D7 */
+		"DSI-Pin 05 [I2C5_SDA_M0_TP]", "", "", "",
+		"", "", "", "";
+};
+
+&gpio4 {
+	gpio-line-names =
+		/* GPIO4 A0-A7 */
+		"", "", "M.2 M-Key Slot4 [M2_D_PERST_L]", "",
+		"", "", "", "",
+		/* GPIO4 B0-B7 */
+		"USB3-A #1 [USB3_TYPEC1_PWREN]", "", "", "M.2 M-Key Slot3 [M2_C_PERST_L]",
+		"M.2 M-Key Slot2 [M2_B_PERST_L]", "M.2 M-Key Slot1 [M2_A_CLKREQ_L]", "M.2 M-Key Slot1 [M2_A_PERST_L]", "",
+		/* GPIO4 C0-C7 */
+		"", "", "", "",
+		"", "", "", "",
+		/* GPIO4 D0-D7 */
+		"", "", "", "",
+		"", "", "", "";
+};
+
+&i2c6 {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	fusb302: typec-portc@22 {
+		compatible = "fcs,fusb302";
+		reg = <0x22>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PD3 IRQ_TYPE_LEVEL_LOW>;
+		int-n-gpios = <&gpio0 RK_PD3 GPIO_ACTIVE_LOW>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&usbc0_int>;
+		vbus-supply = <&vbus_5v0_typec>;
+		status = "okay";
+
+		usb_con: connector {
+			compatible = "usb-c-connector";
+			label = "USB-C";
+			data-role = "host";
+			power-role = "source";
+			/* Set Rp pull-up current explicitly to 1.5A mode */
+			typec-power-opmode = "1.5A";
+			source-pdos = <PDO_FIXED(5000, 2000, PDO_FIXED_USB_COMM)>;
+			vbus-supply = <&vbus_5v0_typec>;
+
+                        mode-switch = <&usbdp_phy0>;
+                        orientation-switch = <&usbdp_phy0>;
+
+			altmodes {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				altmode@0 {
+					reg = <0>;
+					svid = <0xff01>;
+					vdo = <0xffffffff>;
+				};
+			};
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 {
+					reg = <0>;
+					usbc0_orien_sw: endpoint {
+						remote-endpoint = <&usbdp_phy0_orientation_switch>;
+					};
+				};
+
+				port@1 {
+					reg = <1>;
+					dp_altmode_mux: endpoint {
+						remote-endpoint = <&usbdp_phy0_dp_altmode_mux>;
+					};
+				};
+			};
+		};
+	};
+
+	rgb_led: led-controller@66 {
+		compatible = "onnn,cat3626";
+		reg = <0x66>;
+                #address-cells = <1>;
+                #size-cells = <0>;
+                
+		pinctrl-names = "default";
+		pinctrl-0 = <&rgb_enable_pin>;
+		enable-gpios = <&gpio3 RK_PA4 GPIO_ACTIVE_LOW>;
+
+		multi-led {
+			color = <LED_COLOR_ID_RGB>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			led@0 {
+			    reg = <0>;
+			    color = <LED_COLOR_ID_RED>;
+			};
+
+			led@1 {
+			    reg = <1>;
+			    color = <LED_COLOR_ID_GREEN>;
+			};
+
+			led@2 {
+			    reg = <2>;
+			    color = <LED_COLOR_ID_BLUE>;
+			};
+		};
+	};
+
+	poc_regulator: poc-switches@28 {
+		compatible = "maxim,max20087";
+		reg = <0x28>;
+		vint-supply = <&v12p0_poc>;
+		maxim,outputs = <2>;
+		status = "okay";
+
+		regulators {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			poc_cam0: out1 {
+				reg = <0>;
+				regulator-name = "poc_cam0";
+				regulator-min-microvolt = <12000000>;
+				regulator-max-microvolt = <12000000>;
+				regulator-always-on;
+				regulator-boot-on;
+			};
+
+			poc_cam1: out2 {
+				reg = <1>;
+				regulator-name = "poc_cam1";
+				regulator-min-microvolt = <12000000>;
+				regulator-max-microvolt = <12000000>;
+				regulator-always-on;
+				regulator-boot-on;
+			};
+		};
+	};
+};
+
+/* =================================================================
+ * I2C7: MAX96724 Deserializer + Downstream Devices
+ * ================================================================= */
+&i2c7 {
+    status = "okay";
+    clock-frequency = <400000>;
+
+    gmsl_deser: deserializer@2e {
+        compatible = "maxim,max96724";
+        reg = <0x2e>;
+
+        i2c-alias-pool = <0x64 0x65 0x66 0x67 0x68 0x69 0x6a 0x6b>;
+
+        pinctrl-names = "default";
+        pinctrl-0 = <&deser_pwdn_pin>;
+        powerdown-gpios = <&gpio2 17 GPIO_ACTIVE_LOW>;
+
+        #address-cells = <1>;
+        #size-cells = <0>;
+
+        ports {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            /* STURDeCAM31 on Link 0 */
+            port@0 {
+                reg = <0>;
+                gmsl_in_a: endpoint {
+                    remote-endpoint = <&ser_0_gmsl_out>;
+                };
+            };
+
+            /* STURDeCAM57 on Link 1 */
+            port@1 {
+                reg = <1>;
+                gmsl_in_b: endpoint {
+                    remote-endpoint = <&ser_1_gmsl_out>;
+                };
+            };
+
+            /* Output Port A (Link 0 / CAM31) -> RK3588 csi_dphy0 (2 Lanes) */
+            port@4 {
+                reg = <4>;
+                gmsl_out_to_dphy0: endpoint {
+                    remote-endpoint = <&csi_dphy0_in>;
+                    data-lanes = <1 2>;
+                };
+            };
+
+            /* Output Port B (Link 1 / CAM57) -> RK3588 csi_dphy1 (4 Lanes) */
+            port@5 {
+                reg = <5>;
+                gmsl_out_to_dphy1: endpoint {
+                    remote-endpoint = <&csi_dphy1_in>;
+                    data-lanes = <1 2 3 4>;
+                };
+            };
+        };
+
+        i2c-atr {
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            /* Link 0: STURDeCAM31 (Sony ISX031) */
+            i2c@0 {
+                #address-cells = <1>;
+                #size-cells = <0>;
+                reg = <0>;
+
+                serializer_a: serializer@40 {
+                    compatible = "maxim,max9295a";
+                    reg = <0x40>;
+                    gpio-controller;
+                    #gpio-cells = <2>;
+                    gpio-ranges = <&serializer_a 0 0 2>;
+
+                    ports {
+                        #address-cells = <1>;
+                        #size-cells = <0>;
+
+                        port@0 {
+                            reg = <0>;
+                            ser_0_csi_in: endpoint {
+                                remote-endpoint = <&sensor_a_out>;
+                            };
+                        };
+
+                        port@1 {
+                            reg = <1>;
+                            ser_0_gmsl_out: endpoint {
+                                remote-endpoint = <&gmsl_in_a>;
+                            };
+                        };
+                    };
+                };
+
+                camera_a: sensor@1a {
+                    compatible = "sony,isx031";
+                    reg = <0x1a>;
+                    clocks = <&cru CLK_MIPI_CAMARAOUT_M1>;
+                    clock-names = "xvclk";
+                    reset-gpios = <&serializer_a 1 GPIO_ACTIVE_LOW>;
+
+                    port {
+                        sensor_a_out: endpoint {
+                            remote-endpoint = <&ser_0_csi_in>;
+                            data-lanes = <1 2>;
+                        };
+                    };
+                };
+            };
+
+            /* Link 1: STURDeCAM57 (OmniVision OX05B1S) */
+            i2c@1 {
+                #address-cells = <1>;
+                #size-cells = <0>;
+                reg = <1>;
+
+                serializer_b: serializer@40 {
+                    compatible = "maxim,max96717";
+                    reg = <0x40>;
+                    gpio-controller;
+                    #gpio-cells = <2>;
+                    gpio-ranges = <&serializer_b 0 0 5>;
+
+                    ports {
+                        #address-cells = <1>;
+                        #size-cells = <0>;
+
+                        port@0 {
+                            reg = <0>;
+                            ser_1_csi_in: endpoint {
+                                remote-endpoint = <&isp_b_out>;
+                            };
+                        };
+
+                        port@1 {
+                            reg = <1>;
+                            ser_1_gmsl_out: endpoint {
+                                remote-endpoint = <&gmsl_in_b>;
+                            };
+                        };
+                    };
+                };
+            };
+        };
+    };
+
+    i2c_switch_b: i2c-mux@70 {
+        compatible = "nxp,pca9548";
+        reg = <0x70>;
+        #address-cells = <1>;
+        #size-cells = <0>;
+        reset-gpios = <&serializer_b 0 GPIO_ACTIVE_HIGH>;
+
+        i2c_ch0: i2c@0 {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            reg = <0>;
+
+            isp_b: isp@24 {
+                compatible = "ovti,ox05b1s";
+                reg = <0x24>;
+                reset-gpios = <&serializer_b 4 GPIO_ACTIVE_LOW>;
+
+                port {
+                    isp_b_out: endpoint {
+                        remote-endpoint = <&ser_1_csi_in>;
+                        data-lanes = <1 2 3 4>;
+                    };
+                };
+            };
+        };
+    };
+};
+
+/* =================================================================
+ * 2. MIPI D-PHY0 & CSI2 Host Controller (CAM31 - 2 Lanes, ISP Bypass)
+ * ================================================================= */
+&csi_dphy0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Input from MAX96724 Deserializer Output Port A */
+		port@0 {
+			reg = <0>;
+			csi_dphy0_in: endpoint {
+				remote-endpoint = <&gmsl_out_to_dphy0>;
+				data-lanes = <1 2>;
+			};
+		};
+
+		/* Output to csi2 */
+		port@1 {
+			reg = <1>;
+			csi_dphy0_out: endpoint {
+				remote-endpoint = <&mipi_csi2_in>;
+			};
+		};
+	};
+};
+
+&csi2 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			mipi_csi2_in: endpoint {
+				remote-endpoint = <&csi_dphy0_out>;
+				data-lanes = <1 2>;
+			};
+		};
+
+		/* Direct Output to VICAP (Path 2) */
+		port@1 {
+			reg = <1>;
+			mipi_csi2_out: endpoint {
+				remote-endpoint = <&vicap_mipi2_in1>;
+			};
+		};
+	};
+};
+
+/* =================================================================
+ * 3. MIPI D-PHY1 & CSI4 Host Controller (CAM57 - 4 Lanes, VC0/VC1)
+ * ================================================================= */
+&csi_dphy1 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Input from MAX96724 Deserializer Output Port B */
+		port@0 {
+			reg = <0>;
+			csi_dphy1_in: endpoint {
+				remote-endpoint = <&gmsl_out_to_dphy1>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+
+		/* Output to csi4 */
+		port@1 {
+			reg = <1>;
+			csi_dphy1_out: endpoint {
+				remote-endpoint = <&mipi_csi4_in>;
+			};
+		};
+	};
+};
+
+&csi4 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		port@0 {
+			reg = <0>;
+			mipi_csi4_in: endpoint {
+				remote-endpoint = <&csi_dphy1_out>;
+				data-lanes = <1 2 3 4>;
+			};
+		};
+
+		/* Output Port: Demux Virtual Channel streams into VICAP */
+		port@1 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* Stream 0 (VC0 / RGB) -> VICAP Path 0 */
+			mipi_csi4_out0: endpoint@0 {
+				reg = <0>;
+				remote-endpoint = <&vicap_mipi4_in0>;
+			};
+
+			/* Stream 1 (VC1 / IR) -> VICAP Path 1 */
+			mipi_csi4_out1: endpoint@1 {
+				reg = <1>;
+				remote-endpoint = <&vicap_mipi4_in1>;
+			};
+		};
+	};
+};
+
+/* =================================================================
+ * Enable VICAP & VICAP System MMU
+ * ================================================================= */
+&vicap_mmu {
+	status = "okay";
+};
+
+&vicap {
+	status = "okay";
+
+	mipi_csi2 {
+		status = "okay";
+
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			/* CAM57 VC0 (RGB) Input from CSI4 */
+			port@0 {
+				reg = <0>;
+				vicap_mipi4_in0: endpoint {
+					remote-endpoint = <&mipi_csi4_out0>;
+				};
+			};
+
+			/* CAM57 VC1 (IR) Input from CSI4 */
+			port@1 {
+				reg = <1>;
+				vicap_mipi4_in1: endpoint {
+					remote-endpoint = <&mipi_csi4_out1>;
+				};
+			};
+
+			/* CAM31 Input from CSI2 (Bypass Path) */
+			port@2 {
+				reg = <2>;
+				vicap_mipi2_in1: endpoint {
+					remote-endpoint = <&mipi_csi2_out>;
+				};
+			};
+		};
+	};
+
+	/* VICAP Output Ports to ISP Engines */
+	vicap_outputs {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* VICAP Stream 0 -> ISP0 (CAM57 RGB Processing) */
+		port@0 {
+			reg = <0>;
+			vicap_isp0_out: endpoint {
+				remote-endpoint = <&isp0_input>;
+			};
+		};
+
+		/* VICAP Stream 1 -> ISP1 (CAM57 IR Processing) */
+		port@1 {
+			reg = <1>;
+			vicap_isp1_out: endpoint {
+				remote-endpoint = <&isp1_input>;
+			};
+		};
+
+		/* Stream 2 (CAM31) requires no ISP output endpoint here; 
+		 * vicap routes it directly to DMA ring buffers (/dev/video2). */
+	};
+};
+
+&isp0_mmu {
+	status = "okay";
+};
+
+&isp0 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Input Port: Accepts VC0 (RGB) stream from VICAP / VICAP */
+		port@0 {
+			reg = <0>;
+			isp0_input: endpoint {
+				remote-endpoint = <&vicap_isp0_out>;
+			};
+		};
+	};
+};
+
+&isp1_mmu {
+	status = "okay";
+};
+
+&isp1 {
+	status = "okay";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Input Port: Accepts VC1 (IR) stream from VICAP / VICAP */
+		port@0 {
+			reg = <0>;
+			isp1_input: endpoint {
+				remote-endpoint = <&vicap_isp1_out>;
+			};
+		};
+	};
+};
+
+&pcie2x1l0 {
+        status = "disabled";
+};
+
+&pcie30phy {
+	status = "disabled";
+};
+
+&pcie3x4 {
+	status = "disabled";
+};
+
+&pcie3x2 {
+	status = "disabled";
+};
+
+&pinctrl {
+	gpio-key {
+		key1_pin: key1-pin {
+			rockchip,pins = <0 RK_PD5 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	hdmirx {
+		hdmirx_hpd: hdmirx-5v-detection {
+			rockchip,pins = <3 RK_PD4 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	pcie {
+		pcie2_0_rst: pcie2-0-rst {
+			rockchip,pins = <4 RK_PB4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		pcie2_1_rst: pcie2-1-rst {
+			rockchip,pins = <4 RK_PA2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		pcie3x2_rst: pcie3x2-rst {
+			rockchip,pins = <4 RK_PB3 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		pcie3x4_rst: pcie3x4-rst {
+			rockchip,pins = <4 RK_PB6 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	usb {
+		vcc_5v0_host20_en: vcc-5v0-host20-en {
+			rockchip,pins = <1 RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		vcc_5v0_host30p1_en: vcc-5v0-host30p1-en {
+			rockchip,pins = <4 RK_PB0 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		vcc_5v0_host30p2_en: vcc-5v0-host30p2-en {
+			rockchip,pins = <3 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+	usb-typec {
+		usbc0_int: usbc0-int {
+			rockchip,pins = <0 RK_PD3 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		typec_5v_pwr_en: typec-5v-pwr-en {
+			rockchip,pins = <1 RK_PD2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
+        gmsl-deser {
+		deser_pwdn_pin: deser-pwdn-pin {
+			rockchip,pins = <2 RK_PC1 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+        rgb-led {
+                rgb_enable_pin: rgb-enable-pin {
+			rockchip,pins = <3 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>;
+                };
+        };
+};
+
+/* microSD card */
+&sdmmc {
+	status = "okay";
+};
+
+&spi0 {
+	status = "okay";
+	pinctrl-0 = <&spi0m2_cs0 &spi0m2_pins>;
+	power_switch: switch@0 {
+		compatible = "nxp,mc33xs2410";
+		reg = <0x0>; /* SPI Chip Select 0 */
+		spi-max-frequency = <10000000>; /* 10 MHz max SPI clock */
+		spi-cpha; /* SPI Mode 1 (CPOL=0, CPHA=1) */
+
+		/* Power Supplies from Schematic */
+		vspi-supply = <&vcc_3v3_m2_a>; /* Pin 10 VSPI (+3.3V) */
+		vdd-supply = <&vcc_5v0_sys>;   /* Pin 19 VDD (+5.0V) */
+		vpwr-supply = <&vcc_12v_dcin>;   /* VPWR Pins (+13.6V) */
+
+		/* Fault Interrupt Line (Pin 4 FAULT_N) */
+		interrupt-parent = <&gpio0>;
+		interrupts = <RK_PA4 IRQ_TYPE_LEVEL_LOW>;
+
+		/* Required by the kernel driver framework to probe */
+		#pwm-cells = <3>;
+
+		channels {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			channel@0 {
+				reg = <0>;
+				status = "disabled";
+			};
+
+			channel@1 {
+				reg = <1>;
+				status = "disabled";
+			};
+
+			channel@2 {
+				reg = <2>;
+				status = "disabled";
+			};
+
+			/* Channel 4 (OUT4 - PWR_SPEAKER) */
+			channel@3 {
+				reg = <3>;
+				label = "pwr_speaker";
+				status = "okay";
+			};
+		};
+	};
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+/* Shared with UART8 */
+&spi4 {
+	num-cs = <1>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi4m1_cs0 &spi4m1_pins>;
+	status = "disabled";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+&uart0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart0m0_xfer>;
+	status = "disabled";
+};
+
+/* Debug UART */
+&uart2 {
+	status = "okay";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+&uart3 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart3m1_xfer>;
+	status = "disabled";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+/* Shared with SPI0 */
+&uart4 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart4m2_xfer>;
+	status = "disabled";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+&uart6 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart6m1_xfer>;
+	status = "okay";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+/* Shared with SPI0 */
+&uart7 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart7m2_xfer>;
+	status = "disabled";
+};
+
+/* GPIO Connector, connected to 40-pin GPIO header */
+/* Shared with SPI4 */
+&uart8 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&uart8m1_xfer>;
+	status = "disabled";
+};
+
+/* USB2 PHY for USB Type-C port */
+/* CM3588 USB Controller Config Table: USB20 OTG0 */
+&u2phy0 {
+	status = "okay";
+};
+
+&u2phy0_otg {
+	phy-supply = <&vbus_5v0_typec>;
+	status = "okay";
+};
+
+/* USB Type-C */
+/* PHYs: <&u2phy0_otg>, <&usbdp_phy0 PHY_TYPE_USB3> */
+/* USB Type-C / DWC3 Controller */
+&usb_host0_xhci {
+	status = "okay";
+	dr_mode = "host";
+	maximum-speed = "super-speed";
+};
+
+/* USB3/DP Combo PHY 0 (Connected to Type-C Port & DP0 Controller) */
+&usbdp_phy0 {
+	status = "okay";
+	mode-switch;
+	orientation-switch;
+	rockchip,dp-lane-mux = <0 1 2 3>; /* Updated for FriendlyElec / CM3588 PCB routing */
+	sbu1-dc-gpios = <&gpio4 RK_PA6 GPIO_ACTIVE_HIGH>;
+	sbu2-dc-gpios = <&gpio4 RK_PA7 GPIO_ACTIVE_HIGH>;
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Port 0: Type-C Orientation Switch -> fusb302 port@1 */
+		port@0 {
+			reg = <0>;
+			usbdp_phy0_orientation_switch: endpoint {
+				remote-endpoint = <&usbc0_orien_sw>;
+			};
+		};
+
+		/* Port 1: Type-C DP AltMode Mux -> fusb302 port@2 */
+		port@1 {
+			reg = <1>;
+			usbdp_phy0_dp_altmode_mux: endpoint {
+				remote-endpoint = <&dp_altmode_mux>;
+			};
+		};
+
+		/* Port 2: Internal DP Controller Link -> &dp0 */
+		port@2 {
+			reg = <2>;
+			usbdp_phy0_typec_dp: endpoint {
+				remote-endpoint = <&dp0_in_typec>;
+			};
+		};
+	};
+};
+
+/* Enable VOP2 and VOP MMU */
+&vop {
+	status = "okay";
+};
+
+&vop_mmu {
+	status = "okay";
+};
+
+/* Define the output endpoint inside VP0 */
+&vp0 {
+	status = "okay";
+
+	vp0_out_dp0: endpoint {
+		remote-endpoint = <&dp0_in_vp0>;
+	};
+};
+
+&dp0 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&dp0m0_pins>;
+	phys = <&usbdp_phy0 PHY_TYPE_DP>;
+	phy-names = "dp";
+
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		/* Port 0: Video Input from VOP2 VP0 (REQUIRED) */
+		port@0 {
+			reg = <0>;
+
+			dp0_in_vp0: endpoint {
+				remote-endpoint = <&vp0_out_dp0>;
+			};
+		};
+
+		/* Port 1: Output to USB-C Combo PHY (REQUIRED FOR DP ALTMODE) */
+		port@1 {
+			reg = <1>;
+
+			dp0_in_typec: endpoint {
+				remote-endpoint = <&usbdp_phy0_typec_dp>;
+			};
+		};
+	};
+};

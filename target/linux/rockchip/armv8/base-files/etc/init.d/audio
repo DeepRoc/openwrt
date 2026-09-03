@@ -1,0 +1,25 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+NAME=audio
+
+
+start() {
+    # 1. Route I2S Stream to Stereo DAC
+    amixer sset 'Stereo DAC MIXL DAC L1' on
+    amixer sset 'Stereo DAC MIXR DAC R1' on
+
+    # 2. Enable DAC Inputs
+    amixer sset 'DAC MIXL INF1' on
+    amixer sset 'DAC MIXR INF1' on
+
+    # 3. Direct DAC output to Headphone Out (HPO) Mixer
+    amixer sset 'HPO MIX DAC1' on
+
+    # 4. Unmute the Main Headphone Control & Set Volume
+    amixer sset 'HP' on
+    amixer sset 'HP' 35
+
+    # 5. Unmute Master DAC Digital Volume
+    amixer sset 'DAC1' 175
+}

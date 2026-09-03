@@ -241,6 +241,21 @@ endef
 $(eval $(call KernelPackage,i2c-mlxcpld))
 
 
+I2C_ATR_MODULES:= \
+  CONFIG_I2C_ATR:drivers/i2c/i2c-atr
+
+define KernelPackage/i2c-atr
+  $(call i2c_defaults,$(I2C_ATR_MODULES),51)
+  TITLE:=I2C address translation support
+  DEPENDS:=+kmod-i2c-core
+endef
+
+define KernelPackage/i2c-atr/description
+ Kernel modules for I2C address translation support
+endef
+
+$(eval $(call KernelPackage,i2c-atr))
+
 I2C_MUX_MODULES:= \
   CONFIG_I2C_MUX:drivers/i2c/i2c-mux
 
@@ -405,8 +420,6 @@ endef
 
 $(eval $(call KernelPackage,i2c-smbus))
 
-
-
 I2C_TINY_USB_MODULES:= \
   CONFIG_I2C_TINY_USB:drivers/i2c/busses/i2c-tiny-usb
 
@@ -423,4 +436,41 @@ endef
 
 $(eval $(call KernelPackage,i2c-tiny-usb))
 
+I2C_MAX96724_MODULES:= \
+  CONFIG_VIDEO_MAXIM_SERDES:drivers/media/i2c/maxim-serdes/max-serdes \
+  CONFIG_VIDEO_MAX96717:drivers/media/i2c/maxim-serdes/max96717 \
+  CONFIG_VIDEO_MAX96724:drivers/media/i2c/maxim-serdes/max96724
 
+define KernelPackage/i2c-max96724
+  $(call i2c_defaults,$(I2C_MAX96724_MODULES),51)
+  TITLE:=MAX96724 GMSL2 deserializer
+  DEPENDS:=+kmod-i2c-core +kmod-i2c-atr +kmod-i2c-mux
+endef
+
+define KernelPackage/i2c-max96724/description
+ Kernel modules MAX96724 GMSL2 Deserializer
+endef
+
+$(eval $(call KernelPackage,i2c-max96724))
+
+I2C_OX05B1S_MODULES:= \
+  CONFIG_VIDEO_OX05B1S:drivers/media/i2c/ox05b1s/ox05b1s
+
+define KernelPackage/i2c-ox05b1s
+  $(call i2c_defaults,$(I2C_OX05B1S_MODULES),52)
+  TITLE:=Camera interface to Omnivision OX05B1S CCD with OAX4000 ISP
+  DEPENDS:=+kmod-i2c-core +kmod-i2c-mux
+endef
+
+$(eval $(call KernelPackage,i2c-ox05b1s))
+
+I2C_ISX031_MODULES:= \
+  CONFIG_VIDEO_ISX031:drivers/media/i2c/isx031
+
+define KernelPackage/i2c-isx031
+  $(call i2c_defaults,$(I2C_ISX031_MODULES),52)
+  TITLE:=Camera interface to Sony ISX031 CCD
+  DEPENDS:=+kmod-i2c-core
+endef
+
+$(eval $(call KernelPackage,i2c-isx031))

@@ -1,0 +1,212 @@
+diff --git a/drivers/leds/rgb/Kconfig b/drivers/leds/rgb/Kconfig
+index 222d943d826a..2ea895f6e5d3 100644
+--- a/drivers/leds/rgb/Kconfig
++++ b/drivers/leds/rgb/Kconfig
+@@ -14,6 +14,17 @@ config LEDS_GROUP_MULTICOLOR
+ 	  To compile this driver as a module, choose M here: the module
+ 	  will be called leds-group-multicolor.
+ 
++config LEDS_CAT3626
++	tristate "LED support for CAT3626"
++	depends on I2C
++	depends on OF
++	help
++	  This option enables support for ON semiconductor CAT3626
++	  Dual 6-Output RGB LED Driver.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called leds-cat3626.
++
+ config LEDS_KTD202X
+ 	tristate "LED support for KTD202x Chips"
+ 	depends on I2C
+diff --git a/drivers/leds/rgb/Makefile b/drivers/leds/rgb/Makefile
+index a501fd27f179..b59d2b786a2f 100644
+--- a/drivers/leds/rgb/Makefile
++++ b/drivers/leds/rgb/Makefile
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: GPL-2.0
+ 
+ obj-$(CONFIG_LEDS_GROUP_MULTICOLOR)	+= leds-group-multicolor.o
++obj-$(CONFIG_LEDS_CAT3626)		+= leds-cat3626.o
+ obj-$(CONFIG_LEDS_KTD202X)		+= leds-ktd202x.o
+ obj-$(CONFIG_LEDS_NCP5623)		+= leds-ncp5623.o
+ obj-$(CONFIG_LEDS_PWM_MULTICOLOR)	+= leds-pwm-multicolor.o
+diff --git a/drivers/leds/rgb/leds-cat3626.c b/drivers/leds/rgb/leds-cat3626.c
+new file mode 100644
+index 000000000000..7f430fdc415b
+--- /dev/null
++++ b/drivers/leds/rgb/leds-cat3626.c
+@@ -0,0 +1,172 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * CAT3626 Multi-LED Driver
++ *
++ * Author: Abdel Alkuor <alkuor@gmail.com>
++ * Datasheet: https://www.onsemi.com/pdf/datasheet/cat3626-d.pdf
++ */
++
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/gpio/consumer.h>
++#include <linux/led-class-multicolor.h>
++
++#define CAT3626_BRIGHT_RED 0x00
++#define CAT3626_BRIGHT_GRN 0x01
++#define CAT3626_BRIGHT_BLU 0x02
++#define CAT3626_ENABLE     0x03
++#define CAT3626_BRIGHT_MAX 0x20
++
++struct cat3626 {
++	struct i2c_client *client;
++	struct led_classdev_mc mc_dev;
++	struct mutex lock;
++
++	struct gpio_desc *enable_pin;
++};
++
++static int cat3626_write(struct i2c_client *client, u8 reg, u8 data)
++{
++	return i2c_smbus_write_byte_data(client, reg, data);
++}
++
++static int cat3626_brightness_set(struct led_classdev *cdev,
++				  enum led_brightness brightness)
++{
++	struct led_classdev_mc *mc_cdev = lcdev_to_mccdev(cdev);
++	struct cat3626 *cat = container_of(mc_cdev, struct cat3626, mc_dev);
++	u8 enable = 0;
++	int ret;
++
++	guard(mutex)(&cat->lock);
++
++	for (int i = 0; i < mc_cdev->num_colors; i++) {
++		int intensity = mc_cdev->subled_info[i].intensity;
++		int color = min(intensity * CAT3626_BRIGHT_MAX / 256, CAT3626_BRIGHT_MAX);
++		if (color > 0) {
++			enable |= 3 << (2*i);
++		}
++		ret = cat3626_write(cat->client, i, color);
++		if (ret)
++			return ret;
++	}
++
++	ret = cat3626_write(cat->client, CAT3626_ENABLE, enable);
++	if (ret)
++		return ret;
++
++	return 0;
++}
++
++static int cat3626_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct fwnode_handle *mc_node, *led_node;
++	struct led_init_data init_data = { };
++	struct cat3626 *cat;
++	struct mc_subled *subled_info;
++	unsigned int num_subleds;
++	u32 color_index;
++	u32 reg;
++	int ret;
++
++	cat = devm_kzalloc(dev, sizeof(*cat), GFP_KERNEL);
++	if (!cat)
++		return -ENOMEM;
++
++	cat->enable_pin = devm_gpiod_get_optional(dev, "enable", GPIOD_OUT_HIGH);
++	if (IS_ERR(cat->enable_pin)) {
++		return dev_err_probe(dev, PTR_ERR(cat->enable_pin), "Failed to get enable GPIO\n");
++	}
++
++	cat->client = client;
++
++	mc_node = device_get_named_child_node(dev, "multi-led");
++	if (!mc_node)
++		return -EINVAL;
++
++	num_subleds = fwnode_get_child_node_count(mc_node);
++
++	subled_info = devm_kcalloc(dev, num_subleds, sizeof(*subled_info), GFP_KERNEL);
++	if (!subled_info) {
++		ret = -ENOMEM;
++		goto release_mc_node;
++	}
++
++	fwnode_for_each_available_child_node(mc_node, led_node) {
++		ret = fwnode_property_read_u32(led_node, "color", &color_index);
++		if (ret)
++			goto release_led_node;
++
++		subled_info[cat->mc_dev.num_colors].channel = reg;
++		subled_info[cat->mc_dev.num_colors++].color_index = color_index;
++	}
++
++	init_data.fwnode = mc_node;
++
++	cat->mc_dev.led_cdev.max_brightness = 255;
++	cat->mc_dev.subled_info = subled_info;
++	cat->mc_dev.led_cdev.brightness_set_blocking = cat3626_brightness_set;
++
++	mutex_init(&cat->lock);
++	i2c_set_clientdata(client, cat);
++
++	ret = led_classdev_multicolor_register_ext(dev, &cat->mc_dev, &init_data);
++	if (ret)
++		goto destroy_lock;
++
++	return 0;
++
++destroy_lock:
++	mutex_destroy(&cat->lock);
++
++release_mc_node:
++	fwnode_handle_put(mc_node);
++
++	return ret;
++
++release_led_node:
++	fwnode_handle_put(led_node);
++	goto release_mc_node;
++}
++
++static void cat3626_remove(struct i2c_client *client)
++{
++	struct cat3626 *cat = i2c_get_clientdata(client);
++
++	cat3626_write(client, CAT3626_ENABLE, 0);
++	led_classdev_multicolor_unregister(&cat->mc_dev);
++	mutex_destroy(&cat->lock);
++}
++
++static void cat3626_shutdown(struct i2c_client *client)
++{
++	struct cat3626 *cat = i2c_get_clientdata(client);
++
++	if (!(cat->mc_dev.led_cdev.flags & LED_RETAIN_AT_SHUTDOWN))
++		cat3626_write(client, CAT3626_ENABLE, 0);
++
++	mutex_destroy(&cat->lock);
++}
++
++static const struct of_device_id cat3626_id[] = {
++	{ .compatible = "onnn,cat3626" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, cat3626_id);
++
++static struct i2c_driver cat3626_i2c_driver = {
++	.driver	= {
++		.name = "cat3626",
++		.of_match_table = cat3626_id,
++	},
++	.probe = cat3626_probe,
++	.remove = cat3626_remove,
++	.shutdown = cat3626_shutdown,
++};
++
++module_i2c_driver(cat3626_i2c_driver);
++
++MODULE_AUTHOR("Jonathan Olson <jpolsonaz@gmail.com>");
++MODULE_DESCRIPTION("CAT3626 Multi-LED driver");
++MODULE_LICENSE("GPL");

@@ -383,7 +383,9 @@ define U-Boot/nanopc-t6-rk3588
   $(U-Boot/rk358x/Default)
   NAME:=NanoPC T6
   BUILD_DEVICES:= \
-    friendlyarm_nanopc-t6
+    friendlyarm_nanopc-t6 \
+    friendlyarm_cm3588-nas \
+    friendlyarm_cm3588-gmsl
 endef
 
 define U-Boot/rock-5-itx-rk3588

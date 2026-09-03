@@ -1,0 +1,667 @@
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index cdd7ba5da0d5..a4089549ad6b 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -777,6 +777,7 @@ config VIDEO_VGXY61
+ 
+ source "drivers/media/i2c/ccs/Kconfig"
+ source "drivers/media/i2c/et8ek8/Kconfig"
++source "drivers/media/i2c/ox05b1s/Kconfig"
+ 
+ endif
+ 
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 57cdd8dc96f6..c704f440da00 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -120,6 +120,7 @@ obj-$(CONFIG_VIDEO_OV9282) += ov9282.o
+ obj-$(CONFIG_VIDEO_OV9640) += ov9640.o
+ obj-$(CONFIG_VIDEO_OV9650) += ov9650.o
+ obj-$(CONFIG_VIDEO_OV9734) += ov9734.o
++obj-$(CONFIG_VIDEO_OX05B1S) += ox05b1s/
+ obj-$(CONFIG_VIDEO_RDACM20) += rdacm20.o
+ obj-$(CONFIG_VIDEO_RDACM21) += rdacm21.o
+ obj-$(CONFIG_VIDEO_RJ54N1) += rj54n1cb0c.o
+diff --git a/drivers/media/i2c/ox05b1s/Kconfig b/drivers/media/i2c/ox05b1s/Kconfig
+new file mode 100644
+index 000000000000..48fcd04b20d5
+--- /dev/null
++++ b/drivers/media/i2c/ox05b1s/Kconfig
+@@ -0,0 +1,10 @@
++config VIDEO_OX05B1S
++	tristate "OmniVision raw sensor support OX05B1S"
++	depends on OF
++	depends on GPIOLIB
++	select REGMAP_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the Omnivision OX05B1S RGB-IR sensor.
++	  This is a 1/2.5-Inch CMOS image sensor with an active array size of 2592 x 1944.
++	  It is programmable through I2C interface.
++	  The output is on MIPI CSI-2 interface.
+diff --git a/drivers/media/i2c/ox05b1s/Makefile b/drivers/media/i2c/ox05b1s/Makefile
+new file mode 100644
+index 000000000000..47d29b01df23
+--- /dev/null
++++ b/drivers/media/i2c/ox05b1s/Makefile
+@@ -0,0 +1 @@
++obj-$(CONFIG_VIDEO_OX05B1S) += ox05b1s.o
+diff --git a/drivers/media/i2c/ox05b1s/ox05b1s.c b/drivers/media/i2c/ox05b1s/ox05b1s.c
+new file mode 100644
+index 000000000000..3fcaba77a989
+--- /dev/null
++++ b/drivers/media/i2c/ox05b1s/ox05b1s.c
+@@ -0,0 +1,614 @@
++/*
++ * Drivers for OmniVision OAX4000 ISP on connected to ox05b1s canera sensor.
++ * Clean Mainline Port for Linux 6.x
++ */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/pm_runtime.h>
++#include <linux/regmap.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-subdev.h>
++
++/* Custom V4L2 Control CIDs for OAX4000 Dual RGB-IR ISP */
++#define V4L2_CID_CUSTOM_BASE                    (V4L2_CID_USER_BASE + 0x1000)
++
++#define V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR        (V4L2_CID_CUSTOM_BASE + 1)
++#define V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR    (V4L2_CID_CUSTOM_BASE + 2)
++#define V4L2_CID_CUSTOM_GAIN_IR                 (V4L2_CID_CUSTOM_BASE + 3)
++#define V4L2_CID_CUSTOM_MODE_SELECT             (V4L2_CID_CUSTOM_BASE + 4)
++#define V4L2_CID_CUSTOM_FSYNC_ENABLE            (V4L2_CID_CUSTOM_BASE + 5)
++
++#define OX05B1S_NUM_STREAMS  2   /* Stream 0: VC0 (RGB), Stream 1: VC1 (IR) */
++
++struct ox05b1s_mode {
++	u32 width;
++	u32 height;
++	u32 code;
++	const struct reg_sequence *reg_list;
++	unsigned int num_regs;
++};
++
++struct ox05b1s_dev {
++	struct i2c_client *client;
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++	struct regmap *regmap;
++	
++	/* Hardware Control Lines */
++	struct gpio_desc *reset_gpio; /* Controls MFP4 on MAX96717 */
++	struct i2c_client *i2c_switch; /* Client handle for 0x70 switch if needed */
++	
++	struct v4l2_ctrl_handler ctrls;
++	const struct ox05b1s_mode *cur_mode;
++	bool streaming;
++};
++
++static inline struct ox05b1s_dev *to_ox05b1s(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct ox05b1s_dev, sd);
++}
++
++/* Low-level OAX4000 ISP Host Command Protocol */
++static int oax4000_send_isp_cmd(struct ox05b1s_dev *sensor, u8 cmd_id,
++				const u8 *payload, u16 len)
++{
++	u8 cmd_buf[512] = {0};
++	int ret, i;
++
++	if (len > 400)
++		return -EINVAL;
++
++	/* OAX4000 Host Command Mailbox Header (12 bytes @ 0x3000) */
++	cmd_buf[0]  = 0x00;
++	cmd_buf[1]  = 0x00;
++	cmd_buf[2]  = 0x00;
++	cmd_buf[3]  = 0x00;
++	cmd_buf[4]  = 0x00;
++	cmd_buf[5]  = 0x05;
++	cmd_buf[6]  = 0x00;
++	cmd_buf[7]  = 0x43; /* CMD_SIGNATURE */
++	cmd_buf[8]  = cmd_id;
++	cmd_buf[9]  = 0x00;
++	cmd_buf[10] = (len >> 8) & 0xFF;
++	cmd_buf[11] = len & 0xFF;
++
++	/* Copy Payload starting at offset 12 (0x300C) */
++	for (i = 0; i < len; i++)
++		cmd_buf[12 + i] = payload[i];
++
++	/* Write complete mailbox buffer to 0x3000+ */
++	for (i = 0; i < (12 + len); i++) {
++		ret = regmap_write(sensor->regmap, 0x3000 + i, cmd_buf[i]);
++		if (ret)
++			return ret;
++	}
++
++	/* Trigger ISP Execution at 0x80BC */
++	ret = regmap_write(sensor->regmap, 0x80BC, 0x01);
++	if (ret)
++		return ret;
++
++	/* Small delay for ISP command execution */
++	usleep_range(1000, 2000);
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * Hardware Initialization Sequence (Replacing Vendor Sysfs Hooks)
++ * -----------------------------------------------------------------------------
++ */
++static int oax4000_power_on(struct ox05b1s_dev *sensor)
++{
++	struct device *dev = &sensor->client->dev;
++
++	if (sensor->reset_gpio) {
++		dev_info(dev, "Pulsing MFP4 reset line for OAX4000 ISP...\n");
++		
++		/* Drive MFP4 LOW (Assert ISP Reset) */
++		gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++		msleep(50);
++
++		/* Drive MFP4 HIGH (Release ISP Reset) */
++		gpiod_set_value_cansleep(sensor->reset_gpio, 0);
++		msleep(200); /* Wait for OAX4000 ROM bootloader to start */
++	}
++
++	return 0;
++}
++
++static int oax4000_power_off(struct ox05b1s_dev *sensor)
++{
++	if (sensor->reset_gpio)
++		gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * V4L2 Subdev Operations
++ * -----------------------------------------------------------------------------
++ */
++
++static int ox05b1s_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct ox05b1s_dev *sensor = to_ox05b1s(sd);
++	int ret = 0;
++
++	if (sensor->streaming == enable)
++		return 0;
++
++	if (enable) {
++		ret = pm_runtime_resume_and_get(sd->dev);
++		if (ret < 0)
++			return ret;
++
++		/* Wakeup / Stream Start command to OX05B1S ISP */
++		ret = regmap_write(sensor->regmap, 0x0100, 0x01);
++		if (ret) {
++			pm_runtime_put(sd->dev);
++			return ret;
++		}
++		sensor->streaming = true;
++	} else {
++		/* Sleep / Stream Stop command to OX05B1S ISP */
++		regmap_write(sensor->regmap, 0x0100, 0x00);
++		pm_runtime_put(sd->dev);
++		sensor->streaming = false;
++	}
++
++	return 0;
++}
++
++static int ox05b1s_enum_frame_size(struct v4l2_subdev *sd,
++				   struct v4l2_subdev_state *sd_state,
++				   struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index > 0)
++		return -EINVAL;
++
++	if (fse->code != MEDIA_BUS_FMT_YUYV8_1X16)
++		return -EINVAL;
++
++	fse->min_width = 2592;
++	fse->max_width = 2592;
++	fse->min_height = 1946;
++	fse->max_height = 1946;
++
++	return 0;
++}
++
++static int ox05b1s_get_fmt(struct v4l2_subdev *sd,
++			   struct v4l2_subdev_state *sd_state,
++			   struct v4l2_subdev_format *fmt)
++{
++	struct v4l2_mbus_framefmt *mbus_fmt;
++
++	/* Get format for specific stream (Stream 0 = RGB, Stream 1 = IR) */
++	mbus_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad, fmt->stream);
++	if (!mbus_fmt)
++		return -EINVAL;
++
++	mbus_fmt->code = MEDIA_BUS_FMT_YUYV8_1X16;
++	mbus_fmt->width = 2592;
++	mbus_fmt->height = 1946;
++	mbus_fmt->field = V4L2_FIELD_NONE;
++	mbus_fmt->colorspace = V4L2_COLORSPACE_SRGB;
++
++	fmt->format = *mbus_fmt;
++	return 0;
++}
++
++static const u32 ox05b1s_mbus_codes[] = {
++	MEDIA_BUS_FMT_YUYV8_1X16, /* UYVY 4:2:2 8-bit */
++};
++
++static int ox05b1s_enum_mbus_code(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index >= ARRAY_SIZE(ox05b1s_mbus_codes))
++		return -EINVAL;
++
++	/* Set the UYVY bus format code */
++	code->code = ox05b1s_mbus_codes[code->index];
++	return 0;
++}
++
++static int ox05b1s_set_fmt(struct v4l2_subdev *sd,
++			   struct v4l2_subdev_state *sd_state,
++			   struct v4l2_subdev_format *fmt)
++{
++	struct v4l2_mbus_framefmt *mbus_fmt;
++
++	mbus_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
++	if (!mbus_fmt)
++		return -EINVAL;
++
++	mbus_fmt->code = MEDIA_BUS_FMT_YUYV8_1X16;
++	mbus_fmt->width = 2592;
++	mbus_fmt->height = 1946;
++	mbus_fmt->field = V4L2_FIELD_NONE;
++	mbus_fmt->colorspace = V4L2_COLORSPACE_SRGB;
++
++	fmt->format = *mbus_fmt;
++	return 0;
++}
++
++static const struct v4l2_mbus_framefmt ox05b1s_def_fmt = {
++	.width = 2592,
++	.height = 1946,
++	.code = MEDIA_BUS_FMT_YUYV8_1X16,
++	.field = V4L2_FIELD_NONE,
++	.colorspace = V4L2_COLORSPACE_SRGB,
++	.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT,
++	.quantization = V4L2_QUANTIZATION_DEFAULT,
++	.xfer_func = V4L2_XFER_FUNC_DEFAULT,
++};
++
++static int ox05b1s_init_state(struct v4l2_subdev *sd,
++			      struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_route routes[] = {
++		{
++			.sink_pad = 0,
++			.sink_stream = 0,
++			.source_pad = 0,
++			.source_stream = 0,
++			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
++		},
++		{
++			.sink_pad = 0,
++			.sink_stream = 1,
++			.source_pad = 0,
++			.source_stream = 1,
++			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
++		},
++	};
++	struct v4l2_subdev_krouting routing = {
++		.num_routes = ARRAY_SIZE(routes),
++		.routes = routes,
++	};
++
++	return v4l2_subdev_set_routing_with_fmt(sd, state, &routing,
++						&ox05b1s_def_fmt);
++}
++
++static int ox05b1s_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct ox05b1s_dev *sensor =
++		container_of(ctrl->handler, struct ox05b1s_dev, ctrls);
++	struct i2c_client *client = sensor->client;
++	u8 val8;
++	u8 buf[4];
++	int ret = 0;
++
++	/* Only apply control changes if powered on */
++	if (!pm_runtime_get_if_in_use(&client->dev))
++		return 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_SATURATION:
++		/* OAX4000 Saturation Command (0x23) */
++		val8 = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x23, &val8, 1);
++		break;
++
++	case V4L2_CID_SHARPNESS:
++		/* OAX4000 Sharpness Command (0x24) */
++		val8 = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x24, &val8, 1);
++		break;
++
++	case V4L2_CID_BRIGHTNESS:
++		/* OAX4000 Brightness Command (0x21) */
++		val8 = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x21, &val8, 1);
++		break;
++
++	case V4L2_CID_EXPOSURE_AUTO:
++		/* RGB Auto Exposure Mode: V4L2_EXPOSURE_AUTO (0) vs MANUAL (1) */
++		val8 = (ctrl->val == V4L2_EXPOSURE_AUTO) ? 0x01 : 0x00;
++		ret = oax4000_send_isp_cmd(sensor, 0x11, &val8, 1);
++		break;
++
++	case V4L2_CID_EXPOSURE_ABSOLUTE:
++		/* Manual Exposure Absolute RGB (16-bit payload) */
++		buf[0] = (ctrl->val >> 8) & 0xFF;
++		buf[1] = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x12, buf, 2);
++		break;
++
++	case V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR:
++		/* IR Channel Auto Exposure */
++		val8 = ctrl->val ? 0x01 : 0x00;
++		ret = oax4000_send_isp_cmd(sensor, 0x15, &val8, 1);
++		break;
++
++	case V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR:
++		/* IR Channel Manual Exposure Absolute */
++		buf[0] = (ctrl->val >> 8) & 0xFF;
++		buf[1] = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x16, buf, 2);
++		break;
++
++	case V4L2_CID_GAIN:
++		/* RGB Channel Global Gain */
++		val8 = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x13, &val8, 1);
++		break;
++
++	case V4L2_CID_CUSTOM_GAIN_IR:
++		/* IR Channel Global Gain */
++		val8 = ctrl->val & 0xFF;
++		ret = oax4000_send_isp_cmd(sensor, 0x17, &val8, 1);
++		break;
++
++	case V4L2_CID_POWER_LINE_FREQUENCY:
++		/* Anti-Flicker: 0 = Disabled, 1 = 50Hz, 2 = 60Hz */
++		switch (ctrl->val) {
++		case V4L2_CID_POWER_LINE_FREQUENCY_50HZ:
++			val8 = 0x01;
++			break;
++		case V4L2_CID_POWER_LINE_FREQUENCY_60HZ:
++			val8 = 0x02;
++			break;
++		default:
++			val8 = 0x00;
++			break;
++		}
++		ret = oax4000_send_isp_cmd(sensor, 0x28, &val8, 1);
++		break;
++
++	case V4L2_CID_HFLIP:
++		/* Horizontal Flip Register 0x3012 */
++		val8 = ctrl->val ? 0x01 : 0x00;
++		ret = regmap_write(sensor->regmap, 0x3012, val8);
++		break;
++
++	case V4L2_CID_VFLIP:
++		/* Vertical Flip Register 0x3013 */
++		val8 = ctrl->val ? 0x01 : 0x00;
++		ret = regmap_write(sensor->regmap, 0x3013, val8);
++		break;
++
++	case V4L2_CID_CUSTOM_FSYNC_ENABLE:
++		/* Frame Sync Enable Register 0x3020 */
++		val8 = ctrl->val ? 0x01 : 0x00;
++		ret = regmap_write(sensor->regmap, 0x3020, val8);
++		break;
++
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	pm_runtime_put(&client->dev);
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops ox05b1s_ctrl_ops = {
++	.s_ctrl = ox05b1s_s_ctrl,
++};
++
++static const struct v4l2_ctrl_config custom_ctrls[] = {
++	{
++		.ops = &ox05b1s_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
++		.name = "IR Auto Exposure",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 1,
++	},
++	{
++		.ops = &ox05b1s_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR,
++		.name = "IR Exposure Absolute",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 1,
++		.max = 0xFFFF,
++		.step = 1,
++		.def = 100,
++	},
++	{
++		.ops = &ox05b1s_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_GAIN_IR,
++		.name = "IR Global Gain",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 0,
++		.max = 255,
++		.step = 1,
++		.def = 16,
++	},
++	{
++		.ops = &ox05b1s_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_FSYNC_ENABLE,
++		.name = "Frame Sync Enable",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 0,
++	},
++};
++
++static int ox05b1s_init_controls(struct ox05b1s_dev *sensor)
++{
++	struct v4l2_ctrl_handler *hdl = &sensor->ctrls;
++	int i, ret;
++
++	v4l2_ctrl_handler_init(hdl, 12);
++
++	/* Standard V4L2 Camera Controls */
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_SATURATION,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_SHARPNESS,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_BRIGHTNESS,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_GAIN,
++			  0, 255, 1, 16);
++
++	v4l2_ctrl_new_std_menu(hdl, &ox05b1s_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
++			       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
++			  1, 0xFFFF, 1, 100);
++
++	v4l2_ctrl_new_std_menu(hdl, &ox05b1s_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
++			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO, 0,
++			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO);
++
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
++	v4l2_ctrl_new_std(hdl, &ox05b1s_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
++
++	/* Add Custom RGB-IR & FSync Controls */
++	for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++)
++		v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
++
++	if (hdl->error) {
++		ret = hdl->error;
++		v4l2_ctrl_handler_free(hdl);
++		return ret;
++	}
++
++	sensor->sd.ctrl_handler = hdl;
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops ox05b1s_video_ops = {
++	.s_stream = ox05b1s_s_stream,
++};
++
++static const struct v4l2_subdev_pad_ops ox05b1s_pad_ops = {
++	.enum_mbus_code = ox05b1s_enum_mbus_code,
++	.enum_frame_size = ox05b1s_enum_frame_size,
++	.get_fmt = ox05b1s_get_fmt,
++	.set_fmt = ox05b1s_set_fmt,
++};
++
++static const struct v4l2_subdev_ops ox05b1s_subdev_ops = {
++	.video = &ox05b1s_video_ops,
++	.pad = &ox05b1s_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops ox05b1s_internal_ops = {
++	.init_state = ox05b1s_init_state,
++};
++
++/* -----------------------------------------------------------------------------
++ * Driver Probe & Runtime PM
++ * -----------------------------------------------------------------------------
++ */
++
++static const struct regmap_config ox05b1s_regmap_config = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.max_register = 0xffff,
++};
++
++static int ox05b1s_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct ox05b1s_dev *sensor;
++	int ret;
++
++	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
++	if (!sensor)
++		return -ENOMEM;
++
++	sensor->client = client;
++
++	sensor->regmap = devm_regmap_init_i2c(client, &ox05b1s_regmap_config);
++	if (IS_ERR(sensor->regmap))
++		return PTR_ERR(sensor->regmap);
++	/* Get MFP4 Reset GPIO (mapped from MAX96717 gpio controller in DT) */
++	sensor->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(sensor->reset_gpio))
++		return dev_err_probe(dev, PTR_ERR(sensor->reset_gpio),
++				     "Failed to get reset GPIO\n");
++
++        ret = oax4000_power_on(sensor);
++        if (ret)
++		return ret;
++
++	v4l2_i2c_subdev_init(&sensor->sd, client, &ox05b1s_subdev_ops);
++	sensor->sd.internal_ops = &ox05b1s_internal_ops;
++	sensor->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++
++        /* Enable Multiplexed Streams flag for RGB/IR streams */
++	sensor->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_STREAMS;
++
++	/* Initialize internal subdevice state for multi-stream support */
++	if (ret)
++		goto err_power_off;
++	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
++	sensor->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++
++	ret = ox05b1s_init_controls(sensor);
++        if (ret) {
++		dev_err(dev, "Failed to initialize V4L2 controls: %d\n", ret);
++		goto err_entity_cleanup;
++	}
++
++	/* Bind control handler to subdevice */
++	sensor->sd.ctrl_handler = &sensor->ctrls;
++
++	ret = media_entity_pads_init(&sensor->sd.entity, 1, &sensor->pad);
++	if (ret)
++		return ret;
++
++	ret = v4l2_subdev_init_finalize(&sensor->sd);
++	if (ret)
++		goto err_power_off;
++
++	ret = v4l2_async_register_subdev(&sensor->sd);
++	if (ret)
++		goto err_subdev_cleanup;
++
++	dev_info(dev, "OX05B1S ISP / STURDeCAM57 probed successfully\n");
++	return 0;
++
++err_subdev_cleanup:
++	v4l2_subdev_cleanup(&sensor->sd);
++err_power_off:
++	oax4000_power_off(sensor);
++err_entity_cleanup:
++	media_entity_cleanup(&sensor->sd.entity);
++	return ret;
++}
++
++static void ox05b1s_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct ox05b1s_dev *sensor = to_ox05b1s(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	oax4000_power_off(sensor);
++	media_entity_cleanup(&sd->entity);
++}
++
++static const struct of_device_id ox05b1s_of_match[] = {
++	{ .compatible = "ovti,ox05b1s" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, ox05b1s_of_match);
++
++static struct i2c_driver ox05b1s_i2c_driver = {
++	.driver = {
++		.name = "ox05b1s",
++		.of_match_table = ox05b1s_of_match,
++	},
++	.probe = ox05b1s_probe,
++	.remove = ox05b1s_remove,
++};
++module_i2c_driver(ox05b1s_i2c_driver);
++
++MODULE_DESCRIPTION("OmniVision OAX4000/OX05B1S ISP Mainline Driver");
++MODULE_LICENSE("GPL");

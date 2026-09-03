@@ -196,6 +196,26 @@ define Device/friendlyarm_nanopi-r76s
 endef
 TARGET_DEVICES += friendlyarm_nanopi-r76s
 
+define Device/friendlyarm_cm3588-nas
+  $(Device/rk3588)
+  DEVICE_VENDOR := FriendlyARM
+  DEVICE_MODEL := CM3588 NAS
+  UBOOT_DEVICE_NAME := nanopc-t6-rk3588
+  DEVICE_DTS := rk3588-friendlyelec-cm3588-nas
+  DEVICE_PACKAGES := kmod-button-hotplug kmod-input-adc-keys kmod-r8169
+endef
+TARGET_DEVICES += friendlyarm_cm3588-nas
+
+define Device/friendlyarm_cm3588-gmsl
+  $(Device/rk3588)
+  DEVICE_VENDOR := FriendlyARM
+  DEVICE_MODEL := CM3588 GMSL
+  UBOOT_DEVICE_NAME := nanopc-t6-rk3588
+  DEVICE_DTS := rk3588-friendlyelec-cm3588-gmsl
+  DEVICE_PACKAGES := kmod-button-hotplug kmod-input-adc-keys kmod-r8169
+endef
+TARGET_DEVICES += friendlyarm_cm3588-gmsl
+
 define Device/hinlink_h28k
   $(Device/rk3528)
   DEVICE_VENDOR := HINLINK
