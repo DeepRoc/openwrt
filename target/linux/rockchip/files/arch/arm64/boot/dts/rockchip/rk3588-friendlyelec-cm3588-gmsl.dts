@@ -18,6 +18,8 @@
 #include "rk3588-friendlyelec-cm3588.dtsi"
 #include "rk3588-rkvenc-mpp.dtsi"
 
+#define ENABLE_CAM31 1
+
 / {
 	model = "FriendlyElec CM3588 GMSL";
 	compatible = "friendlyarm,cm3588-gmsl", "friendlyarm,cm3588", "rockchip,rk3588";
@@ -393,7 +395,7 @@
 	};
 
 	poc_regulator: poc-switches@28 {
-		compatible = "maxim,max20087";
+		compatible = "maxim,max20089";
 		reg = <0x28>;
 		vint-supply = <&v12p0_poc>;
 		maxim,outputs = <2>;
@@ -448,15 +450,17 @@
             #address-cells = <1>;
             #size-cells = <0>;
 
-            /* STURDeCAM31 on Link 0 */
+#if ENABLE_CAM31
+            /* STURDeCAM31 on Link A */
             port@0 {
                 reg = <0>;
                 gmsl_in_a: endpoint {
                     remote-endpoint = <&ser_0_gmsl_out>;
                 };
             };
+#endif
 
-            /* STURDeCAM57 on Link 1 */
+            /* STURDeCAM57 on Link B */
             port@1 {
                 reg = <1>;
                 gmsl_in_b: endpoint {
@@ -464,21 +468,25 @@
                 };
             };
 
-            /* Output Port A (Link 0 / CAM31) -> RK3588 csi_dphy0 (2 Lanes) */
+
+#if ENABLE_CAM31
+            /* Pad 4: MIPI PHY 0 (2-lane CAM31) */
             port@4 {
                 reg = <4>;
-                gmsl_out_to_dphy0: endpoint {
-                    remote-endpoint = <&csi_dphy0_in>;
+                gmsl_out_csi2: endpoint {
+                    remote-endpoint = <&mipi_csi2_in>;
                     data-lanes = <1 2>;
                 };
             };
+#endif
 
-            /* Output Port B (Link 1 / CAM57) -> RK3588 csi_dphy1 (4 Lanes) */
-            port@5 {
-                reg = <5>;
-                gmsl_out_to_dphy1: endpoint {
-                    remote-endpoint = <&csi_dphy1_in>;
+            /* Pad 6: MIPI PHY 2/3 (4-lane CAM57) */
+            port@6 {
+                reg = <6>;
+                gmsl_out_csi4: endpoint {
+                    remote-endpoint = <&mipi_csi4_in>;
                     data-lanes = <1 2 3 4>;
+                    link-frequencies = /bits/ 64 <750000000>;
                 };
             };
         };
@@ -487,6 +495,7 @@
             #address-cells = <1>;
             #size-cells = <0>;
 
+#if ENABLE_CAM31
             /* Link 0: STURDeCAM31 (Sony ISX031) */
             i2c@0 {
                 #address-cells = <1>;
@@ -498,7 +507,7 @@
                     reg = <0x40>;
                     gpio-controller;
                     #gpio-cells = <2>;
-                    gpio-ranges = <&serializer_a 0 0 2>;
+                    gpio-ranges = <&serializer_a 0 0 11>;
 
                     ports {
                         #address-cells = <1>;
@@ -507,7 +516,7 @@
                         port@0 {
                             reg = <0>;
                             ser_0_csi_in: endpoint {
-                                remote-endpoint = <&sensor_a_out>;
+                                remote-endpoint = <&camera_a_out>;
                             };
                         };
 
@@ -520,21 +529,20 @@
                     };
                 };
 
-                camera_a: sensor@1a {
-                    compatible = "sony,isx031";
-                    reg = <0x1a>;
-                    clocks = <&cru CLK_MIPI_CAMARAOUT_M1>;
-                    clock-names = "xvclk";
-                    reset-gpios = <&serializer_a 1 GPIO_ACTIVE_LOW>;
+                camera_a: sensor@42 {
+                    compatible = "econ,cam31";
+                    reg = <0x42>;
+                    reset-gpios = <&serializer_a 4 GPIO_ACTIVE_LOW>;
 
                     port {
-                        sensor_a_out: endpoint {
+                        camera_a_out: endpoint {
                             remote-endpoint = <&ser_0_csi_in>;
                             data-lanes = <1 2>;
                         };
                     };
                 };
             };
+#endif
 
             /* Link 1: STURDeCAM57 (OmniVision OX05B1S) */
             i2c@1 {
@@ -549,14 +557,14 @@
                     #gpio-cells = <2>;
                     gpio-ranges = <&serializer_b 0 0 5>;
 
-                    ports {
+		    ports {
                         #address-cells = <1>;
                         #size-cells = <0>;
 
                         port@0 {
                             reg = <0>;
                             ser_1_csi_in: endpoint {
-                                remote-endpoint = <&isp_b_out>;
+                                remote-endpoint = <&camera_b_out>;
                             };
                         };
 
@@ -572,30 +580,20 @@
         };
     };
 
-    i2c_switch_b: i2c-mux@70 {
-        compatible = "nxp,pca9548";
-        reg = <0x70>;
-        #address-cells = <1>;
-        #size-cells = <0>;
-        reset-gpios = <&serializer_b 0 GPIO_ACTIVE_HIGH>;
+    /*
+     * Define CAM57 outside the i2c-atr because it manages its own
+     * pca9640 I2C mux connected to the MAX96717 serializer.
+     */
+    camera_b: sensor@24 {
+        compatible = "econ,cam57";
+        reg = <0x24>;
+        reset-gpios = <&serializer_b 4 GPIO_ACTIVE_LOW>;
 
-        i2c_ch0: i2c@0 {
-            #address-cells = <1>;
-            #size-cells = <0>;
-            reg = <0>;
-
-            isp_b: isp@24 {
-                compatible = "ovti,ox05b1s";
-                reg = <0x24>;
-                reset-gpios = <&serializer_b 4 GPIO_ACTIVE_LOW>;
-
-                port {
-                    isp_b_out: endpoint {
-                        remote-endpoint = <&ser_1_csi_in>;
-                        data-lanes = <1 2 3 4>;
-                    };
-                };
-            };
+        port {
+             camera_b_out: endpoint {
+                 remote-endpoint = <&ser_1_csi_in>;
+                 data-lanes = <1 2 3 4>;
+             };
         };
     };
 };
@@ -603,34 +601,15 @@
 /* =================================================================
  * 2. MIPI D-PHY0 & CSI2 Host Controller (CAM31 - 2 Lanes, ISP Bypass)
  * ================================================================= */
+#if ENABLE_CAM31
 &csi_dphy0 {
-	status = "okay";
-
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		/* Input from MAX96724 Deserializer Output Port A */
-		port@0 {
-			reg = <0>;
-			csi_dphy0_in: endpoint {
-				remote-endpoint = <&gmsl_out_to_dphy0>;
-				data-lanes = <1 2>;
-			};
-		};
-
-		/* Output to csi2 */
-		port@1 {
-			reg = <1>;
-			csi_dphy0_out: endpoint {
-				remote-endpoint = <&mipi_csi2_in>;
-			};
-		};
-	};
+        status = "okay";
 };
 
 &csi2 {
 	status = "okay";
+        phys = <&csi_dphy0>;
+        phy-names = "dphy";
 
 	ports {
 		#address-cells = <1>;
@@ -639,7 +618,7 @@
 		port@0 {
 			reg = <0>;
 			mipi_csi2_in: endpoint {
-				remote-endpoint = <&csi_dphy0_out>;
+				remote-endpoint = <&gmsl_out_csi2>;
 				data-lanes = <1 2>;
 			};
 		};
@@ -653,64 +632,45 @@
 		};
 	};
 };
+#endif
 
 /* =================================================================
  * 3. MIPI D-PHY1 & CSI4 Host Controller (CAM57 - 4 Lanes, VC0/VC1)
  * ================================================================= */
+
 &csi_dphy1 {
-	status = "okay";
-
-	ports {
-		#address-cells = <1>;
-		#size-cells = <0>;
-
-		/* Input from MAX96724 Deserializer Output Port B */
-		port@0 {
-			reg = <0>;
-			csi_dphy1_in: endpoint {
-				remote-endpoint = <&gmsl_out_to_dphy1>;
-				data-lanes = <1 2 3 4>;
-			};
-		};
-
-		/* Output to csi4 */
-		port@1 {
-			reg = <1>;
-			csi_dphy1_out: endpoint {
-				remote-endpoint = <&mipi_csi4_in>;
-			};
-		};
-	};
+        status = "okay";
 };
 
 &csi4 {
 	status = "okay";
+        phys = <&csi_dphy1>;
+        phy-names = "dphy";
 
 	ports {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
+		/* Port 0: Receive directly from Deserializer PHY Output */
 		port@0 {
 			reg = <0>;
 			mipi_csi4_in: endpoint {
-				remote-endpoint = <&csi_dphy1_out>;
+				remote-endpoint = <&gmsl_out_csi4>;
 				data-lanes = <1 2 3 4>;
 			};
 		};
 
-		/* Output Port: Demux Virtual Channel streams into VICAP */
+		/* Port 1: Output to VICAP */
 		port@1 {
 			reg = <1>;
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			/* Stream 0 (VC0 / RGB) -> VICAP Path 0 */
 			mipi_csi4_out0: endpoint@0 {
 				reg = <0>;
 				remote-endpoint = <&vicap_mipi4_in0>;
 			};
 
-			/* Stream 1 (VC1 / IR) -> VICAP Path 1 */
 			mipi_csi4_out1: endpoint@1 {
 				reg = <1>;
 				remote-endpoint = <&vicap_mipi4_in1>;
@@ -752,6 +712,7 @@
 				};
 			};
 
+#if ENABLE_CAM31
 			/* CAM31 Input from CSI2 (Bypass Path) */
 			port@2 {
 				reg = <2>;
@@ -759,6 +720,7 @@
 					remote-endpoint = <&mipi_csi2_out>;
 				};
 			};
+#endif
 		};
 	};
 

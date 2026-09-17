@@ -1,0 +1,1738 @@
+diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
+index cdd7ba5da0d5..febf83a489b2 100644
+--- a/drivers/media/i2c/Kconfig
++++ b/drivers/media/i2c/Kconfig
+@@ -60,6 +60,22 @@ config VIDEO_AR0521
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called ar0521.
+ 
++config VIDEO_ECON_CAM31
++	tristate "e-Con CAM31 GMSL2 Sony isx031 Camera"
++	depends on OF
++	depends on GPIOLIB
++	select REGMAP_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the e-Con CAM31 camera with a Sony isx031 sensor
++
++config VIDEO_ECON_CAM57
++	tristate "e-Con CAM57 GMSL2 RGB/IR Camera"
++	depends on OF
++	depends on GPIOLIB
++	select REGMAP_I2C
++	help
++	  This is a Video4Linux2 sensor driver for the e-Con CAM57 with an Omnivision ox05b1s sensor
++
+ config VIDEO_GC0308
+ 	tristate "GalaxyCore GC0308 sensor support"
+ 	select V4L2_CCI_I2C
+diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
+index 57cdd8dc96f6..01a299c8eefe 100644
+--- a/drivers/media/i2c/Makefile
++++ b/drivers/media/i2c/Makefile
+@@ -36,6 +36,8 @@ obj-$(CONFIG_VIDEO_DW9714) += dw9714.o
+ obj-$(CONFIG_VIDEO_DW9719) += dw9719.o
+ obj-$(CONFIG_VIDEO_DW9768) += dw9768.o
+ obj-$(CONFIG_VIDEO_DW9807_VCM) += dw9807-vcm.o
++obj-$(CONFIG_VIDEO_ECON_CAM31) += econ-cam31.o
++obj-$(CONFIG_VIDEO_ECON_CAM57) += econ-cam57.o
+ obj-$(CONFIG_VIDEO_ET8EK8) += et8ek8/
+ obj-$(CONFIG_VIDEO_GC0308) += gc0308.o
+ obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
+diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
+new file mode 100644
+index 000000000000..24ffa81720f1
+--- /dev/null
++++ b/drivers/media/i2c/econ-cam31.c
+@@ -0,0 +1,766 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Driver for eCon STURDeCAM31 containing Sony isx031 sensor.
++ */
++#include <linux/delay.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/of_graph.h>
++#include <linux/byteorder/generic.h>
++#include <linux/gpio/consumer.h>
++
++#include <media/v4l2-async.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-subdev.h>
++#include <media/mipi-csi2.h>
++
++/* Protocol Framing Constants */
++#define MCU_CMD_SIGNATURE		0x43
++#define MCU_HEADER_SIZE			4
++#define MCU_MAX_PAYLOAD			100
++#define MCU_TIMEOUT_MS			1000
++
++/* e-Con Proprietary Host Command Set */
++enum cam31_host_cmd_id {
++	CMD_ID_VERSION			= 0x00,
++	CMD_ID_GET_SENSOR_ID		= 0x01,
++	CMD_ID_GET_STREAM_INFO		= 0x02,
++	CMD_ID_GET_CTRL_INFO		= 0x03,
++	CMD_ID_INIT_CAM			= 0x04,
++	CMD_ID_GET_STATUS		= 0x05,
++	CMD_ID_DE_INIT_CAM		= 0x06,
++	CMD_ID_STREAM_ON		= 0x07,
++	CMD_ID_STREAM_OFF		= 0x08,
++	CMD_ID_STREAM_CONFIG		= 0x09,
++	CMD_ID_GET_CTRL_UI_INFO		= 0x0A,
++
++	CMD_ID_GET_CTRL			= 0x10,
++	CMD_ID_SET_CTRL			= 0x11,
++	CMD_ID_ISP_READ			= 0x12,
++	CMD_ID_ISP_WRITE		= 0x13,
++
++	CMD_ID_FW_UPDT			= 0x14,
++	CMD_ID_ISP_PDOWN		= 0x15,
++	CMD_ID_ISP_PUP			= 0x16,
++
++	CMD_ID_LANE_CONFIG		= 0x17,
++	CMD_ID_MIPI_CLK_CONFIG		= 0x18,
++
++	CMD_ID_SENSOR_READ		= 0x19,
++	CMD_ID_SENSOR_WRITE		= 0x1A,
++
++	/* ISX031-Specific Extended Commands */
++	CMD_ID_INIT_CAM_ISP		= 0xA0,
++	CMD_ID_INIT_CAM_ISP_ERASE	= 0xA1,
++	CMD_ID_FL_STATUS		= 0xA2,
++	CMD_ID_LOAD_PARAM_STATUS	= 0xA3,
++	CMD_ID_NV_STATUS		= 0xA4,
++	CMD_ID_XERROR_STATUS		= 0xA5,
++	CMD_ID_GET_FW_KEY		= 0xA6,
++	CMD_ID_INIT_FLASH_WP		= 0xA7,
++	CMD_ID_INIT_FLASH_WP_DISABLE	= 0xA8,
++	CMD_ID_VERSION_SPI		= 0xA9,
++	CMD_ID_GET_TEMPERATURE		= 0xAA,
++
++	CMD_ID_SET_ACK_RESPONSE_MODE	= 0xB0,
++};
++
++/* Custom V4L2 Control IDs matching e-Con Extension Controls */
++#define V4L2_CID_CAM31_BASE		(V4L2_CID_USER_BASE + 0x2000)
++#define V4L2_CID_CAM_MODE		(V4L2_CID_CAM31_BASE + 1)
++#define V4L2_CID_CUSTOM_TRIGGER		(V4L2_CID_CAM31_BASE + 2)
++#define V4L2_CID_FRAME_SYNC		(V4L2_CID_CAM31_BASE + 3)
++#define V4L2_CID_TRIGGER_MODE		(V4L2_CID_CAM31_BASE + 4)
++#define V4L2_CID_TEMPERATURE		(V4L2_CID_CAM31_BASE + 5)
++
++#define MAX_SUPPORTED_MODES	8
++
++struct cam31_mode {
++	u32 width;
++	u32 height;
++	u32 code;
++	u32 fourcc;
++	u16 fps_num;
++	u16 fps_denom;
++};
++
++struct cam31_dev {
++	struct i2c_client *client;
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++
++	struct v4l2_ctrl_handler ctrl_handler;
++	struct v4l2_ctrl *temperature_ctrl;
++	struct gpio_desc *reset_gpio;
++
++	struct mutex lock; /* Protects stream & ctrl operations */
++	struct cam31_mode modes[MAX_SUPPORTED_MODES];
++	int num_modes;
++	int current_mode;
++	bool streaming;
++};
++
++static inline struct cam31_dev *to_cam31_dev(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct cam31_dev, sd);
++}
++
++/*
++ * e-Con Checksum Calculation:
++ * XOR checksum over 'len' bytes starting at 'data'
++ */
++static u8 cam31_errorcheck(const u8 *data, size_t len)
++{
++	u8 csum = 0;
++	size_t i;
++
++	for (i = 0; i < len; i++)
++		csum ^= data[i];
++
++	return csum;
++}
++
++/* -----------------------------------------------------------------------------
++ * MCU Packet Protocol Transport Layer
++ * -----------------------------------------------------------------------------
++ */
++
++static int cam31_mcu_cmd(struct cam31_dev *cam, u8 cmd_id,
++			 const u8 *tx_payload, u16 tx_len,
++			 u8 *rx_payload, u16 rx_len)
++{
++	struct i2c_client *client = cam->client;
++	struct i2c_adapter *adapter = client->adapter;
++	u8 tx_hdr[5];
++	u8 tx_body[MCU_MAX_PAYLOAD + 1];
++	struct i2c_msg msg;
++	int ret, retry;
++
++	if (tx_len > MCU_MAX_PAYLOAD)
++		return -EINVAL;
++
++	/* --- Phase 1: Header Packet (5 Bytes + STOP) --- */
++	tx_hdr[0] = MCU_CMD_SIGNATURE;
++	tx_hdr[1] = cmd_id;
++	tx_hdr[2] = (tx_len >> 8) & 0xFF;
++	tx_hdr[3] = tx_len & 0xFF;
++	tx_hdr[4] = cam31_errorcheck(&tx_hdr[2], 2);
++
++	msg.addr = client->addr;
++	msg.flags = 0;
++	msg.len = 5;
++	msg.buf = tx_hdr;
++
++	for (retry = 0; retry < 5; retry++) {
++		ret = __i2c_transfer(adapter, &msg, 1);
++		if (ret == 1)
++			break;
++		usleep_range(1000, 2000);
++	}
++	if (ret != 1) {
++		dev_err(&client->dev, "MCU Cmd 0x%02x Header send failed: %d\n",
++			cmd_id, ret);
++		return 0; // (ret < 0) ? ret : -EIO;
++	}
++
++	/* --- Phase 2: Payload Packet (tx_len + 1 Bytes + STOP) --- */
++	if (tx_len && tx_payload) {
++		memcpy(tx_body, tx_payload, tx_len);
++		tx_body[tx_len] = cam31_errorcheck(tx_body, tx_len);
++
++		msg.addr = client->addr;
++		msg.flags = 0;
++		msg.len = tx_len + 1;
++		msg.buf = tx_body;
++
++		for (retry = 0; retry < 5; retry++) {
++			ret = __i2c_transfer(adapter, &msg, 1);
++			if (ret == 1)
++				break;
++			usleep_range(1000, 2000);
++		}
++		if (ret != 1) {
++			dev_err(&client->dev, "MCU Cmd 0x%02x Payload send failed: %d\n",
++				cmd_id, ret);
++			return 0; // (ret < 0) ? ret : -EIO;
++		}
++	}
++
++	/* --- Phase 3: Response Read Packet (rx_len Bytes + STOP) --- */
++	if (rx_len && rx_payload) {
++		msg.addr = client->addr;
++		msg.flags = I2C_M_RD;
++		msg.len = rx_len;
++		msg.buf = rx_payload;
++
++		for (retry = 0; retry < 5; retry++) {
++			ret = __i2c_transfer(adapter, &msg, 1);
++			if (ret == 1)
++				break;
++			usleep_range(1000, 2000);
++		}
++		if (ret != 1) {
++			dev_err(&client->dev, "MCU Cmd 0x%02x Rx Read failed: %d\n",
++				cmd_id, ret);
++			return (ret < 0) ? ret : -EIO;
++		}
++	}
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * V4L2 Controls Handling
++ * -----------------------------------------------------------------------------
++ */
++static int cam31_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct cam31_dev *cam = container_of(ctrl->handler,
++					     struct cam31_dev, ctrl_handler);
++	u8 payload[4];
++	u16 payload_len = 0;
++	u8 cmd_id;
++
++	switch (ctrl->id) {
++	case V4L2_CID_EXPOSURE_AUTO:
++		cmd_id = CMD_ID_SET_CTRL;
++		payload[0] = 0x01; /* Exposure Ctrl Sub-ID */
++		payload[1] = (ctrl->val == V4L2_EXPOSURE_AUTO) ? 0x01 : 0x00;
++		payload_len = 2;
++		break;
++
++	case V4L2_CID_TRIGGER_MODE:
++		cmd_id = CMD_ID_SET_CTRL;
++		payload[0] = 0x02; /* Trigger Ctrl Sub-ID */
++		payload[1] = ctrl->val & 0xFF;
++		payload_len = 2;
++		break;
++
++	case V4L2_CID_TEMPERATURE:
++		cmd_id = CMD_ID_GET_TEMPERATURE;
++		return cam31_mcu_cmd(cam, cmd_id, NULL, 0, payload, 2);
++
++	default:
++		return -EINVAL;
++	}
++
++	return cam31_mcu_cmd(cam, cmd_id, payload, payload_len, NULL, 0);
++}
++
++static const struct v4l2_ctrl_ops cam31_ctrl_ops = {
++	.s_ctrl = cam31_s_ctrl,
++};
++
++static int cam31_init_controls(struct cam31_dev *cam)
++{
++	struct v4l2_ctrl_handler *hdl = &cam->ctrl_handler;
++
++	v4l2_ctrl_handler_init(hdl, 4);
++
++	v4l2_ctrl_new_std_menu(hdl, &cam31_ctrl_ops,
++			       V4L2_CID_EXPOSURE_AUTO,
++			       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
++
++	v4l2_ctrl_new_std(hdl, &cam31_ctrl_ops,
++			  V4L2_CID_GAIN, 0, 255, 1, 128);
++
++	v4l2_ctrl_new_custom(hdl, &(struct v4l2_ctrl_config){
++		.ops = &cam31_ctrl_ops,
++		.id = V4L2_CID_TRIGGER_MODE,
++		.name = "Camera Trigger Mode",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 0,
++		.max = 2,
++		.step = 1,
++		.def = 0,
++	}, NULL);
++
++	cam->temperature_ctrl = v4l2_ctrl_new_custom(hdl, &(struct v4l2_ctrl_config){
++		.ops = &cam31_ctrl_ops,
++		.id = V4L2_CID_TEMPERATURE,
++		.name = "Board Temperature (C)",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.flags = V4L2_CTRL_FLAG_READ_ONLY,
++		.min = -40,
++		.max = 125,
++		.step = 1,
++		.def = 25,
++	}, NULL);
++
++	if (hdl->error) {
++		v4l2_ctrl_handler_free(hdl);
++		return hdl->error;
++	}
++
++	cam->sd.ctrl_handler = hdl;
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * V4L2 Subdevice Operations
++ * -----------------------------------------------------------------------------
++ */
++struct cam31_stream_config_payload {
++	__be16 mode_index;
++	__be32 fourcc;
++	__be16 width;
++	__be16 height;
++	__be16 fps_num;
++	__be16 fps_den;
++} __packed;
++
++static int cam31_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++	struct cam31_stream_config_payload payload;
++	const struct cam31_mode *mode;
++	int ret = 0;
++
++	mutex_lock(&cam->lock);
++
++	if (cam->streaming == !!enable)
++		goto out;
++
++	if (enable) {
++		mode = &cam->modes[cam->current_mode];
++
++		/* Prepare 14-byte CMD_ID_STREAM_CONFIG payload */
++		payload.mode_index = cpu_to_be16(cam->current_mode);
++		payload.fourcc     = cpu_to_be32(mode->fourcc);
++		payload.width      = cpu_to_be16(mode->width);
++		payload.height     = cpu_to_be16(mode->height);
++		payload.fps_num    = cpu_to_be16(mode->fps_num);
++		payload.fps_den    = cpu_to_be16(mode->fps_denom ? mode->fps_denom : 1);
++
++		/* Send 14-byte stream configuration packet */
++		ret = cam31_mcu_cmd(cam, CMD_ID_STREAM_CONFIG,
++				     (u8 *)&payload, sizeof(payload), NULL, 0);
++		if (ret) {
++			dev_err(&cam->client->dev,
++				"Failed to send stream config: %d\n", ret);
++			goto out;
++		}
++
++		/* Enable video stream generation */
++		ret = cam31_mcu_cmd(cam, CMD_ID_STREAM_ON, NULL, 0, NULL, 0);
++		if (!ret)
++			cam->streaming = true;
++	} else {
++		/* Disable video stream generation */
++		ret = cam31_mcu_cmd(cam, CMD_ID_STREAM_OFF, NULL, 0, NULL, 0);
++		if (!ret)
++			cam->streaming = false;
++	}
++
++out:
++	mutex_unlock(&cam->lock);
++	return ret;
++}
++
++static int cam31_enum_mbus_code(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *sd_state,
++				struct v4l2_subdev_mbus_code_enum *code)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++
++	if (code->index >= cam->num_modes)
++		return -EINVAL;
++
++	code->code = cam->modes[code->index].code;
++	return 0;
++}
++
++static int cam31_enum_frame_size(struct v4l2_subdev *sd,
++				 struct v4l2_subdev_state *sd_state,
++				 struct v4l2_subdev_frame_size_enum *fse)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++
++	if (fse->index >= cam->num_modes)
++		return -EINVAL;
++
++	if (fse->code != cam->modes[fse->index].code)
++		return -EINVAL;
++
++	fse->min_width = cam->modes[fse->index].width;
++	fse->max_width = fse->min_width;
++	fse->min_height = cam->modes[fse->index].height;
++	fse->max_height = fse->min_height;
++
++	return 0;
++}
++
++static int cam31_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
++				struct v4l2_mbus_frame_desc *fd)
++{
++	struct v4l2_subdev_state *state;
++	struct v4l2_mbus_framefmt *fmt;
++
++	if (pad != 0)
++		return -EINVAL;
++
++	memset(fd, 0, sizeof(*fd));
++	fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
++	fd->num_entries = 1;
++
++	state = v4l2_subdev_lock_and_get_active_state(sd);
++	fmt = v4l2_subdev_state_get_format(state, 0);
++
++	fd->entry[0].stream = 0;
++	fd->entry[0].flags = V4L2_MBUS_FRAME_DESC_FL_LEN_MAX;
++	fd->entry[0].pixelcode = fmt ? fmt->code : MEDIA_BUS_FMT_UYVY8_1X16;
++	fd->entry[0].bus.csi2.vc = 0;
++	fd->entry[0].bus.csi2.dt = MIPI_CSI2_DT_YUV422_8B;
++
++	v4l2_subdev_unlock_state(state);
++
++	return 0;
++}
++
++static int cam31_get_fmt(struct v4l2_subdev *sd,
++			 struct v4l2_subdev_state *sd_state,
++			 struct v4l2_subdev_format *fmt)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++	struct v4l2_mbus_framefmt *mbus_fmt = &fmt->format;
++	const struct cam31_mode *mode = &cam->modes[cam->current_mode];
++
++	mutex_lock(&cam->lock);
++	mbus_fmt->width = mode->width;
++	mbus_fmt->height = mode->height;
++	mbus_fmt->code = mode->code;
++	mbus_fmt->field = V4L2_FIELD_NONE;
++	mbus_fmt->colorspace = V4L2_COLORSPACE_SRGB;
++	mutex_unlock(&cam->lock);
++
++	return 0;
++}
++
++static int cam31_set_fmt(struct v4l2_subdev *sd,
++			 struct v4l2_subdev_state *sd_state,
++			 struct v4l2_subdev_format *fmt)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++	const struct cam31_mode *mode;
++
++	mode = v4l2_find_nearest_size(cam->modes,
++				      cam->num_modes,
++				      width, height,
++				      fmt->format.width, fmt->format.height);
++
++	mutex_lock(&cam->lock);
++	if (cam->streaming) {
++		mutex_unlock(&cam->lock);
++		return -EBUSY;
++	}
++
++	cam->current_mode = mode - cam->modes;
++	fmt->format.width = mode->width;
++	fmt->format.height = mode->height;
++	fmt->format.code = mode->code;
++	fmt->format.field = V4L2_FIELD_NONE;
++	mutex_unlock(&cam->lock);
++
++	return 0;
++}
++
++static int cam31_init_state(struct v4l2_subdev *sd,
++			    struct v4l2_subdev_state *sd_state)
++{
++	struct cam31_dev *cam = to_cam31_dev(sd);
++
++	struct v4l2_subdev_format fmt = {
++		.which = V4L2_SUBDEV_FORMAT_TRY,
++		.format = {
++			.width = cam->modes[0].width,
++			.height = cam->modes[0].height,
++			.code = cam->modes[0].code,
++			.field = V4L2_FIELD_NONE,
++		},
++	};
++
++	return cam31_set_fmt(sd, sd_state, &fmt);
++}
++
++static const struct v4l2_subdev_internal_ops cam31_internal_ops = {
++	.init_state = cam31_init_state,
++};
++
++static const struct v4l2_subdev_video_ops cam31_video_ops = {
++	.s_stream = cam31_s_stream,
++};
++
++static const struct v4l2_subdev_pad_ops cam31_pad_ops = {
++	.enum_mbus_code = cam31_enum_mbus_code,
++	.enum_frame_size = cam31_enum_frame_size,
++        .get_frame_desc = cam31_get_frame_desc,
++	.get_fmt = cam31_get_fmt,
++	.set_fmt = cam31_set_fmt,
++};
++
++static const struct v4l2_subdev_ops cam31_subdev_ops = {
++	.video = &cam31_video_ops,
++	.pad = &cam31_pad_ops,
++};
++
++/* -----------------------------------------------------------------------------
++ * Hardware Hardware Initialization & Driver Probe
++ * -----------------------------------------------------------------------------
++ */
++
++static int cam31_power_on(struct cam31_dev *cam)
++{
++	u8 init_payload[3] = { 0x00, 0x00, 0x00 };
++	u8 ver_buf[6];
++	int ret;
++
++	if (cam->reset_gpio) {
++		/* Assert Reset (Physical GPIO4 LOW -> 0x40 write on MAX9295/MAX96717) */
++		gpiod_set_value_cansleep(cam->reset_gpio, 1);
++		msleep(2);
++
++		/* De-assert Reset (Physical GPIO4 HIGH -> 0x98 write on MAX9295/MAX96717) */
++		gpiod_set_value_cansleep(cam->reset_gpio, 0);
++        
++		/* Allow MCU time to boot internal ROM/I2C firmware */
++		msleep(50);
++	}
++	/* 1. Send CMD_ID_INIT_FLASH_WP_DISABLE (0xA8) */
++	ret = cam31_mcu_cmd(cam, CMD_ID_INIT_FLASH_WP_DISABLE, NULL, 0, NULL, 0);
++	if (ret) {
++		dev_err(&cam->client->dev, "MCU flash WP disable failed\n");
++		return ret;
++	}
++
++	/* 2. Issue CMD_ID_INIT_CAM (0x04) to power ISX031 rail & INCK clock */
++	ret = cam31_mcu_cmd(cam, CMD_ID_INIT_CAM, init_payload, 3, NULL, 0);
++	if (ret) {
++		dev_err(&cam->client->dev, "MCU ISX031 Init sequence failed\n");
++		return ret;
++	}
++
++	/* 3. Query Firmware Version (0x00) to confirm state machine readiness */
++	ret = cam31_mcu_cmd(cam, CMD_ID_VERSION, NULL, 0, ver_buf, sizeof(ver_buf));
++	if (ret) {
++		dev_err(&cam->client->dev, "MCU Firmware Query failed\n");
++		return ret;
++	}
++
++	dev_info(&cam->client->dev, "CAM31 MCU Online. FW: %*ph\n",
++		 (int)sizeof(ver_buf), ver_buf);
++
++	return 0;
++}
++
++static u32 cam31_fourcc_to_mbus(u32 fourcc)
++{
++	switch (fourcc) {
++	case V4L2_PIX_FMT_UYVY:
++		return MEDIA_BUS_FMT_UYVY8_1X16;
++	case V4L2_PIX_FMT_YUYV:
++		return MEDIA_BUS_FMT_YUYV8_1X16;
++	case V4L2_PIX_FMT_SGRBG10:
++		return MEDIA_BUS_FMT_SGRBG10_1X10;
++	case V4L2_PIX_FMT_SRGGB10:
++		return MEDIA_BUS_FMT_SRGGB10_1X10;
++	default:
++		return MEDIA_BUS_FMT_UYVY8_1X16;
++	}
++}
++
++static int cam31_query_stream_info(struct cam31_dev *cam)
++{
++	struct i2c_client *client = cam->client;
++	u8 tx_payload[3];
++	u8 rx_hdr[6];
++	u8 rx_buf[32];
++	u16 index = 0;
++	u16 payload_len;
++	u8 orig_crc, calc_crc, errcode;
++	int ret;
++
++	while (index < MAX_SUPPORTED_MODES) {
++		/*
++		 * Phase 1: Send Header (CMD_ID_GET_STREAM_INFO = 0x02)
++		 * Telling MCU we are about to send a 2-byte payload size index
++		 */
++		tx_payload[0] = (index >> 8) & 0xff;
++		tx_payload[1] = index & 0xff;
++		ret = cam31_mcu_cmd(cam, CMD_ID_GET_STREAM_INFO, tx_payload, 2, rx_hdr, 6);
++		if (ret < 0) {
++			dev_err(&client->dev, "GET_STREAM_INFO failed at idx %d: %d\n", index, ret);
++			break;
++		}
++
++		/* Verify Header CRC */
++		orig_crc = rx_hdr[4];
++		calc_crc = cam31_errorcheck(&rx_hdr[2], 2);
++		if (orig_crc != calc_crc) {
++			dev_err(&client->dev, "Rx Header CRC Mismatch (0x%02x != 0x%02x)\n", orig_crc, calc_crc);
++			ret = -EINVAL;
++			break;
++		}
++
++		payload_len = (rx_hdr[2] << 8) | rx_hdr[3];
++		if (payload_len == 0) {
++			/* Payload length of 0 indicates end of MCU mode table */
++			dev_dbg(&client->dev, "Reached end of stream info table at index %d\n", index);
++			break;
++		}
++
++		/*
++		 * Phase 4: Read Full Response Data Record (payload_len + 4 bytes wrapper)
++		 */
++		if (payload_len + 4 > sizeof(rx_buf)) {
++			dev_err(&client->dev, "Rx payload size %d exceeds local buffer\n", payload_len);
++			return -ENOMEM;
++		}
++
++		ret = i2c_master_recv(client, rx_buf, payload_len + 4);
++		if (ret < 0) {
++			dev_err(&client->dev, "Stream info record read failed: %d\n", ret);
++			break;
++		}
++
++		/* Verify Body CRC & Errcode */
++		orig_crc = rx_buf[payload_len + 2];
++		calc_crc = cam31_errorcheck(&rx_buf[2], payload_len);
++		errcode = rx_buf[payload_len + 3];
++
++		if (orig_crc != calc_crc || errcode != 0) {
++			dev_err(&client->dev, "Record payload error: CRC 0x%02x (calc 0x%02x), err 0x%02x\n",
++				orig_crc, calc_crc, errcode);
++			return -EIO;
++		}
++
++		/* Parse Record Fields */
++		cam->modes[index].fourcc = (rx_buf[2] << 24) | (rx_buf[3] << 16) | (rx_buf[4] << 8) | rx_buf[5];
++		cam->modes[index].code = cam31_fourcc_to_mbus(cam->modes[index].fourcc);
++		cam->modes[index].width = (rx_buf[6] << 8) | rx_buf[7];
++		cam->modes[index].height = (rx_buf[8] << 8) | rx_buf[9];
++
++		if (rx_buf[10] == 0x01) { /* Discrete Framerate */
++			cam->modes[index].fps_num = (rx_buf[11] << 8) | rx_buf[12];
++			cam->modes[index].fps_denom = (rx_buf[13] << 8) | rx_buf[14];
++		}
++
++		dev_info(&client->dev, "Discovered Mode [%d]: %dx%d FOURCC: 0x%08x @ %d/%d FPS\n",
++			 index, cam->modes[index].width, cam->modes[index].height,
++			 cam->modes[index].fourcc, cam->modes[index].fps_num, cam->modes[index].fps_denom);
++
++		index++;
++	}
++
++	if (index > 0) {
++		cam->num_modes = index;
++	} else {
++		cam->num_modes = 1;
++		cam->modes[0].width = 1920;
++		cam->modes[0].height = 1536;
++		cam->modes[0].fourcc = V4L2_PIX_FMT_UYVY;
++		cam->modes[0].code = MEDIA_BUS_FMT_UYVY8_1X16;
++		cam->modes[0].fps_num = 1;
++		cam->modes[0].fps_denom = 30;
++	}
++	return 0; // (index > 0) ? 0 : -ENODEV;
++}
++
++static int cam31_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct cam31_dev *cam;
++	int ret;
++
++	cam = devm_kzalloc(dev, sizeof(*cam), GFP_KERNEL);
++	if (!cam)
++		return -ENOMEM;
++
++	cam->client = client;
++	cam->current_mode = 0;
++	mutex_init(&cam->lock);
++
++	v4l2_i2c_subdev_init(&cam->sd, client, &cam31_subdev_ops);
++	cam->sd.internal_ops = &cam31_internal_ops;
++
++	cam->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(cam->reset_gpio)) {
++		ret = PTR_ERR(cam->reset_gpio);
++		dev_err(dev, "Failed to get reset GPIO: %d\n", ret);
++		return ret;
++	}
++	ret = cam31_power_on(cam);
++	if (ret)
++		goto err_mutex;
++
++        ret = cam31_query_stream_info(cam);
++        if (ret)
++		goto err_mutex;
++
++        ret = cam31_init_controls(cam);
++	if (ret)
++		goto err_mutex;
++
++	cam->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
++	cam->pad.flags = MEDIA_PAD_FL_SOURCE;
++	cam->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++
++	ret = media_entity_pads_init(&cam->sd.entity, 1, &cam->pad);
++	if (ret)
++		goto err_ctrls;
++
++	ret = v4l2_async_register_subdev(&cam->sd);
++	if (ret) {
++		dev_err(dev, "v4l2 async registration failed: %d\n", ret);
++		goto err_entity;
++	}
++
++	dev_info(dev, "CAM31 (Sony ISX031 via MCU) registered\n");
++	return 0;
++
++err_entity:
++	media_entity_cleanup(&cam->sd.entity);
++err_ctrls:
++	v4l2_ctrl_handler_free(&cam->ctrl_handler);
++err_mutex:
++	mutex_destroy(&cam->lock);
++	return ret;
++}
++
++static void cam31_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct cam31_dev *cam = to_cam31_dev(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	media_entity_cleanup(&sd->entity);
++	v4l2_ctrl_handler_free(&cam->ctrl_handler);
++
++	/* Issue DE_INIT to MCU to drop ISX031 power rails */
++	cam31_mcu_cmd(cam, CMD_ID_DE_INIT_CAM, NULL, 0, NULL, 0);
++
++	mutex_destroy(&cam->lock);
++}
++
++static const struct of_device_id cam31_of_match[] = {
++	{ .compatible = "econ,cam31" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, cam31_of_match);
++
++static struct i2c_driver cam31_i2c_driver = {
++	.driver = {
++		.name = "econ-cam31",
++		.of_match_table = cam31_of_match,
++	},
++	.probe = cam31_probe,
++	.remove = cam31_remove,
++};
++
++module_i2c_driver(cam31_i2c_driver);
++
++MODULE_DESCRIPTION("Mainline Linux V4L2 Subdevice Driver for e-Con STURDeCAM31");
++MODULE_AUTHOR("System Developer");
++MODULE_LICENSE("GPL");
+diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
+new file mode 100644
+index 000000000000..32026ca4d979
+--- /dev/null
++++ b/drivers/media/i2c/econ-cam57.c
+@@ -0,0 +1,920 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * Driver for eCon STURDeCAM57 containing oax4000 ISP connected to OmniVision ox05b1s sensor.
++ */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/regmap.h>
++#include <media/v4l2-cci.h>
++#include <media/v4l2-ctrls.h>
++#include <media/v4l2-device.h>
++#include <media/v4l2-fwnode.h>
++#include <media/v4l2-subdev.h>
++#include <media/mipi-csi2.h>
++
++/* Custom V4L2 Control CIDs for OAX4000 Dual RGB-IR ISP */
++#define V4L2_CID_CUSTOM_BASE                    (V4L2_CID_USER_BASE + 0x1000)
++
++#define V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR        (V4L2_CID_CUSTOM_BASE + 1)
++#define V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR    (V4L2_CID_CUSTOM_BASE + 2)
++#define V4L2_CID_CUSTOM_GAIN_IR                 (V4L2_CID_CUSTOM_BASE + 3)
++#define V4L2_CID_CUSTOM_MODE_SELECT             (V4L2_CID_CUSTOM_BASE + 4)
++#define V4L2_CID_CUSTOM_FSYNC_ENABLE            (V4L2_CID_CUSTOM_BASE + 5)
++
++#define CAM57_NUM_STREAMS  2   /* Stream 0: VC0 (RGB), Stream 1: VC1 (IR) */
++
++struct cam57_mode {
++	u32 width;
++	u32 height;
++	u32 code;
++	const struct reg_sequence *reg_list;
++	unsigned int num_regs;
++};
++
++struct cam57_dev {
++	struct i2c_client *client;
++	struct v4l2_subdev sd;
++	struct media_pad pad;
++	struct regmap *regmap;
++	
++	/* Hardware Control Lines */
++	struct gpio_desc *reset_gpio; /* Controls MFP4 on MAX96717 */
++	struct i2c_client *i2c_switch; /* Client handle for 0x70 switch if needed */
++	
++	struct v4l2_ctrl_handler ctrls;
++	const struct cam57_mode *cur_mode;
++	u16 gain, gain_ir;
++	bool streaming;
++};
++
++static inline struct cam57_dev *to_cam57(struct v4l2_subdev *sd)
++{
++	return container_of(sd, struct cam57_dev, sd);
++}
++
++#define OAX4000_MAILBOX_BASE    0x3000
++#define OAX4000_CMD_TRIGGER_REG 0x80BC
++#define OAX4000_CMD_STATUS_REG  0x80BD
++#define OAX4000_CMD_SUCCESS     0x00
++#define OAX4000_CMD_TIMEOUT_MS  100
++
++static int oax4000_check_cmd_status(struct cam57_dev *sensor)
++{
++	unsigned int val;
++	int ret;
++	unsigned long timeout = jiffies + msecs_to_jiffies(OAX4000_CMD_TIMEOUT_MS);
++
++	do {
++		ret = regmap_read(sensor->regmap, OAX4000_CMD_STATUS_REG, &val);
++		if (ret)
++			return ret;
++
++		if (val == OAX4000_CMD_SUCCESS)
++			return 0;
++
++		usleep_range(500, 1000);
++	} while (time_before(jiffies, timeout));
++
++	dev_err(&sensor->client->dev, "OAX4000 status check timeout (0x%02x)\n", val);
++	return -ETIMEDOUT;
++}
++
++/**
++ * oax4000_send_mailbox_cmd() - Send dynamic-length payload to OAX4000 mailbox
++ * @sensor: Pointer to driver device instance
++ * @msg_data: Map of byte offsets to values (starting at offset 0x3000)
++ * @total_len: Total bytes to write to the mailbox array
++ */
++static int oax4000_send_mailbox_cmd(struct cam57_dev *sensor, const u8 *msg_data, size_t total_len)
++{
++	int ret, i;
++
++	if (!msg_data || total_len == 0)
++		return -EINVAL;
++
++	/* Write payload bytes sequentially starting at Mailbox 0x3000 */
++	for (i = 0; i < total_len; i++) {
++		ret = regmap_write(sensor->regmap, OAX4000_MAILBOX_BASE + i, msg_data[i]);
++		if (ret) {
++			dev_err(&sensor->client->dev, "Mailbox write failed at offset 0x%04x: %d\n",
++				OAX4000_MAILBOX_BASE + i, ret);
++			return ret;
++		}
++	}
++
++	/* Trigger execution via 0x80BC */
++	ret = regmap_write(sensor->regmap, OAX4000_CMD_TRIGGER_REG, 0x01);
++	if (ret)
++		return ret;
++
++	return oax4000_check_cmd_status(sensor);
++}
++
++static int cam57_sensor_rw(struct cam57_dev *sensor, u16 reg, u8 *idata, u16 count, bool is_write)
++{
++	u8 buf[12] = {0};
++	int ret, i;
++
++	buf[5]  = 0x05;                        /* Group ID */
++	buf[6]  = is_write ? 0x00 : 0x01;      /* 0 = Write, 1 = Read */
++	buf[8]  = (reg >> 8) & 0xFF;
++	buf[9]  = reg & 0xFF;
++	buf[10] = count & 0xFF;
++	if (is_write && idata)
++		buf[11] = idata[0];
++
++	ret = oax4000_send_mailbox_cmd(sensor, buf, 12);
++	if (ret)
++		return ret;
++
++	/* Read back data payload from 0x3C07 on read commands */
++	if (!is_write && idata) {
++		for (i = 0; i < count; i++) {
++			u32 val;
++			ret = regmap_read(sensor->regmap, 0x3C07 + i, &val);
++			if (ret)
++				return ret;
++			idata[i] = val & 0xFF;
++		}
++	}
++
++	return 0;
++}
++
++/* Helper to write to sensor registers (like 0x0100) via OAX4000 Mailbox */
++static int cam57_sensor_write_reg(struct cam57_dev *sensor, u16 reg, u8 val)
++{
++	return cam57_sensor_rw(sensor, reg, &val, 1, true);
++}
++struct saturation_entry {
++	u8 reg_0cf4[4];
++	u8 reg_0d0e[4];
++};
++
++/* Lookup table for saturation levels 0 through 10 */
++static const struct saturation_entry saturation_lut[11] = {
++	[0]  = { {0x28, 0x28, 0x28, 0x20}, {0x20, 0x20, 0x20, 0x10} },
++	[1]  = { {0x30, 0x30, 0x28, 0x20}, {0x20, 0x20, 0x20, 0x10} },
++	[2]  = { {0x31, 0x31, 0x38, 0x28}, {0x30, 0x30, 0x40, 0x10} },
++	[3]  = { {0x33, 0x33, 0x38, 0x28}, {0x40, 0x38, 0x40, 0x10} },
++	[4]  = { {0x37, 0x37, 0x38, 0x28}, {0x60, 0x50, 0x40, 0x10} },
++	[5]  = { {0x40, 0x40, 0x38, 0x28}, {0x66, 0x58, 0x50, 0x10} },
++	[6]  = { {0x43, 0x43, 0x38, 0x28}, {0x72, 0x66, 0x60, 0x10} },
++	[7]  = { {0x48, 0x38, 0x30, 0x28}, {0x80, 0x80, 0x50, 0x10} },
++	[8]  = { {0x56, 0x56, 0x38, 0x28}, {0xA2, 0x86, 0x60, 0x10} },
++	[9]  = { {0x66, 0x66, 0x48, 0x38}, {0xB2, 0x96, 0x60, 0x10} },
++	[10] = { {0x74, 0x74, 0x48, 0x38}, {0xB2, 0x96, 0x60, 0x10} },
++};
++
++static int cam57_set_saturation(struct cam57_dev *sensor, s32 val)
++{
++	static const u8 init_9644[4] = { 0x00, 0x90, 0x1C, 0x80 };
++	const struct saturation_entry *entry;
++	int ret, i;
++
++	if (val < 0 || val > 10)
++		return -EINVAL;
++
++	/* 1. Write configuration header to 0x9644 */
++	for (i = 0; i < 4; i++) {
++		ret = regmap_write(sensor->regmap, 0x9644 + i, init_9644[i]);
++		if (ret)
++			return ret;
++	}
++
++	entry = &saturation_lut[val];
++
++	/* 2. Write 0x0CF4 register array (stride = 2) */
++	for (i = 0; i < 4; i++) {
++		ret = regmap_write(sensor->regmap, 0x0CF4 + (i * 2), entry->reg_0cf4[i]);
++		if (ret)
++			return ret;
++	}
++
++	/* 3. Write 0x0D0E register array (sequential) */
++	for (i = 0; i < 4; i++) {
++		ret = regmap_write(sensor->regmap, 0x0D0E + i, entry->reg_0d0e[i]);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
++static int cam57_set_sharpness(struct cam57_dev *sensor, s32 val)
++{
++	u8 buf[8] = {0};
++
++	if (val < 0 || val > 255)
++		return -EINVAL;
++
++	buf[3] = 0x43;
++	buf[5] = 0x05;
++	buf[6] = 0x10;
++	buf[7] = val & 0xFF;
++
++	return oax4000_send_mailbox_cmd(sensor, buf, sizeof(buf));
++}
++
++static int cam57_set_contrast(struct cam57_dev *sensor, s32 val)
++{
++	u8 buf[9] = {0};
++
++	if (val < 0 || val > 255)
++		return -EINVAL;
++
++	buf[3] = 0x4D;
++	buf[5] = 0x09;
++	buf[6] = 0x10;
++	buf[7] = 0x0A;
++	buf[8] = 0x00;
++
++	return oax4000_send_mailbox_cmd(sensor, buf, sizeof(buf));
++}
++
++static int cam57_set_brightness(struct cam57_dev *sensor, u8 brightness)
++{
++	u8 buf[9] = {0};
++
++	buf[3] = 0x40;
++	buf[5] = 0x06;
++	buf[6] = 0x10;
++	buf[8] = brightness;
++
++	return oax4000_send_mailbox_cmd(sensor, buf, sizeof(buf));
++}
++
++static int cam57_set_exposure_rgb(struct cam57_dev *sensor, bool auto_exp, u16 exp_val, u16 gain_val)
++{
++	u8 buf[24] = {0};
++
++	buf[3] = 0x44;
++	buf[5] = 0x45;
++	buf[6] = 0x10;
++	buf[7] = auto_exp ? 0x00 : 0x01;
++
++	if (!auto_exp) {
++		/* Populate 4 exposure registers (16-bit) */
++		buf[8]  = buf[10] = buf[12] = buf[14] = (exp_val >> 8) & 0xFF;
++		buf[9]  = buf[11] = buf[13] = buf[15] = exp_val & 0xFF;
++		/* Populate 4 gain registers (16-bit) */
++		buf[16] = buf[18] = buf[20] = buf[22] = (gain_val >> 8) & 0xFF;
++		buf[17] = buf[19] = buf[21] = buf[23] = gain_val & 0xFF;
++	}
++
++	return oax4000_send_mailbox_cmd(sensor, buf, auto_exp ? 8 : sizeof(buf));
++}
++
++static int cam57_set_exposure_ir(struct cam57_dev *sensor, bool auto_exp, u16 exp_val, u16 gain_val)
++{
++	u8 buf[75] = {0};
++
++	buf[3] = 0x44;
++	buf[5] = 0x45;
++	buf[6] = 0x80;
++	buf[7] = 0x00;
++
++	if (!auto_exp) {
++		buf[58] = 0x01;
++		/* Populate IR exposure parameters */
++		buf[59] = buf[61] = buf[63] = buf[65] = (exp_val >> 8) & 0xFF;
++		buf[60] = buf[62] = buf[64] = buf[66] = exp_val & 0xFF;
++		/* Populate IR gain parameters */
++		buf[67] = buf[69] = buf[71] = buf[73] = (gain_val >> 8) & 0xFF;
++		buf[68] = buf[70] = buf[72] = buf[74] = gain_val & 0xFF;
++	}
++
++	return oax4000_send_mailbox_cmd(sensor, buf, auto_exp ? 8 : sizeof(buf));
++}
++
++static int cam57_set_power_line_freq(struct cam57_dev *sensor, u8 freq_mode)
++{
++	u8 buf[7] = {0};
++
++	buf[3] = 0x54;
++	buf[5] = 0x01;
++	buf[6] = (freq_mode == 2) ? 0x33 : 0x30; /* 2 = 60Hz (0x33), 1 = 50Hz (0x30) */
++
++	return oax4000_send_mailbox_cmd(sensor, buf, sizeof(buf));
++}
++
++static int cam57_set_hflip(struct cam57_dev *sensor, s32 val)
++{
++	u8 reg_val = 0;
++	int ret;
++
++	/* 1. Read existing value of sensor register 0x3013 */
++	ret = cam57_sensor_rw(sensor, 0x3013, &reg_val, 1, false);
++	if (ret)
++		return ret;
++
++	/* 2. Modify Bit 0 */
++	if (val)
++		reg_val |= BIT(0);
++	else
++		reg_val &= ~BIT(0);
++
++	/* 3. Write back to sensor register 0x3013 */
++	return cam57_sensor_rw(sensor, 0x3013, &reg_val, 1, true);
++}
++
++static int cam57_set_vflip(struct cam57_dev *sensor, s32 val)
++{
++	u8 reg_val = 0;
++	int ret;
++
++	/* 1. Read existing value of sensor register 0x3012 */
++	ret = cam57_sensor_rw(sensor, 0x3012, &reg_val, 1, false);
++	if (ret)
++		return ret;
++
++	/* 2. Modify Bit 0 */
++	if (val)
++		reg_val |= BIT(0);
++	else
++		reg_val &= ~BIT(0);
++
++	/* 3. Write back to sensor register 0x3012 */
++	return cam57_sensor_rw(sensor, 0x3012, &reg_val, 1, true);
++}
++
++/* -----------------------------------------------------------------------------
++ * Hardware Initialization Sequence (Replacing Vendor Sysfs Hooks)
++ * -----------------------------------------------------------------------------
++ */
++#define MODULE_I2C_SWITCH_ADDR  0x70
++#define TWO_CHANNELS            0x03
++
++static int cam57_enable_i2c_switch(struct i2c_client *client)
++{
++	struct i2c_adapter *adap = client->adapter;
++	u8 both = TWO_CHANNELS;
++	struct i2c_msg msg = {
++            .addr = MODULE_I2C_SWITCH_ADDR,
++            .flags = 0,
++            .len = 1,
++            .buf = &both,
++        };
++	int ret = 0, retry;
++
++        for (retry = 0; retry < 10; retry++) {
++		ret = i2c_transfer(adap, &msg, 1);
++		if (ret >= 0)
++			return 0;
++		usleep_range(2000, 3000);
++	}
++	dev_err(&client->dev, "Failed to enable I2C switch @ 0x%02x: %d\n",
++		MODULE_I2C_SWITCH_ADDR, ret);
++	return ret;
++}
++
++static int oax4000_power_on(struct cam57_dev *sensor)
++{
++	struct device *dev = &sensor->client->dev;
++
++	if (sensor->reset_gpio) {
++		dev_info(dev, "Pulsing MFP4 reset line for OAX4000 ISP...\n");
++		
++		/* Drive MFP4 LOW (Assert ISP Reset) */
++		gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++		msleep(50);
++
++		/* Drive MFP4 HIGH (Release ISP Reset) */
++		gpiod_set_value_cansleep(sensor->reset_gpio, 0);
++		msleep(200); /* Wait for OAX4000 ROM bootloader to start */
++	}
++
++	return 0;
++}
++
++static int oax4000_power_off(struct cam57_dev *sensor)
++{
++	if (sensor->reset_gpio)
++		gpiod_set_value_cansleep(sensor->reset_gpio, 1);
++
++	return 0;
++}
++
++/* -----------------------------------------------------------------------------
++ * V4L2 Subdev Operations
++ * -----------------------------------------------------------------------------
++ */
++
++static int cam57_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct cam57_dev *sensor = to_cam57(sd);
++	int ret = 0;
++
++	if (sensor->streaming == enable)
++		return 0;
++
++	if (enable) {
++		/* Wakeup / Stream Start command to CAM57 ISP */
++		ret = regmap_write(sensor->regmap, 0x0100, 0x01);
++		if (ret)
++			return ret;
++		sensor->streaming = true;
++	} else {
++		/* Sleep / Stream Stop command to CAM57 ISP */
++		regmap_write(sensor->regmap, 0x0100, 0x00);
++		sensor->streaming = false;
++	}
++
++	return 0;
++}
++
++static int cam57_enum_frame_size(struct v4l2_subdev *sd,
++				   struct v4l2_subdev_state *sd_state,
++				   struct v4l2_subdev_frame_size_enum *fse)
++{
++	if (fse->index > 0)
++		return -EINVAL;
++
++	if (fse->code != MEDIA_BUS_FMT_YUYV8_1X16)
++		return -EINVAL;
++
++	fse->min_width = 2592;
++	fse->max_width = 2592;
++	fse->min_height = 1946;
++	fse->max_height = 1946;
++
++	return 0;
++}
++
++
++static int cam57_get_fmt(struct v4l2_subdev *sd,
++			 struct v4l2_subdev_state *sd_state,
++			 struct v4l2_subdev_format *fmt)
++{
++	struct v4l2_mbus_framefmt *mbus_fmt;
++
++	mbus_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad, fmt->stream);
++	if (!mbus_fmt)
++		mbus_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad, 0);
++	if (!mbus_fmt) {
++		/* Return hardcoded default format if state format pointer is NULL */
++		fmt->format.code = MEDIA_BUS_FMT_UYVY8_1X16;
++		fmt->format.width = 2592;
++		fmt->format.height = 1946;
++		fmt->format.field = V4L2_FIELD_NONE;
++		fmt->format.colorspace = V4L2_COLORSPACE_SRGB;
++		return 0;
++	}
++	mbus_fmt->code = MEDIA_BUS_FMT_YUYV8_1X16;
++	mbus_fmt->width = 2592;
++	mbus_fmt->height = 1946;
++	mbus_fmt->field = V4L2_FIELD_NONE;
++	mbus_fmt->colorspace = V4L2_COLORSPACE_SRGB;
++	fmt->format = *mbus_fmt;
++	return 0;
++}
++
++static const u32 cam57_mbus_codes[] = {
++	MEDIA_BUS_FMT_UYVY8_1X16, /* UYVY 4:2:2 8-bit */
++};
++
++static int cam57_enum_mbus_code(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *sd_state,
++				  struct v4l2_subdev_mbus_code_enum *code)
++{
++	if (code->index >= ARRAY_SIZE(cam57_mbus_codes))
++		return -EINVAL;
++
++	/* Set the UYVY bus format code */
++	code->code = cam57_mbus_codes[code->index];
++	return 0;
++}
++
++static int cam57_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
++				struct v4l2_mbus_frame_desc *fd)
++{
++	struct v4l2_subdev_state *state;
++	struct v4l2_subdev_route *route;
++	struct v4l2_mbus_framefmt *fmt;
++
++	if (pad != 0)
++		return -EINVAL;
++
++	memset(fd, 0, sizeof(*fd));
++	fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
++
++	state = v4l2_subdev_lock_and_get_active_state(sd);
++
++	/* Iterate through active state routes (0/0 -> 0/0 and 0/1 -> 0/1) */
++	for_each_active_route(&state->routing, route) {
++		if (route->source_pad != pad)
++			continue;
++
++		if (fd->num_entries >= V4L2_FRAME_DESC_ENTRY_MAX)
++			break;
++
++		fmt = v4l2_subdev_state_get_format(state, pad, route->source_stream);
++
++		fd->entry[fd->num_entries] = (struct v4l2_mbus_frame_desc_entry){
++			.stream = route->source_stream,
++			.flags = V4L2_MBUS_FRAME_DESC_FL_LEN_MAX,
++			.pixelcode = fmt ? fmt->code : MEDIA_BUS_FMT_UYVY8_1X16,
++			.bus.csi2 = {
++				.vc = route->source_stream, /* VC0 for Stream 0, VC1 for Stream 1 */
++				.dt = MIPI_CSI2_DT_YUV422_8B,
++			},
++		};
++		fd->num_entries++;
++	}
++
++	v4l2_subdev_unlock_state(state);
++
++	/* Fallback if no routes are populated in state yet */
++	if (fd->num_entries == 0) {
++		fd->num_entries = 1;
++		fd->entry[0].stream = 0;
++		fd->entry[0].pixelcode = MEDIA_BUS_FMT_UYVY8_1X16;
++		fd->entry[0].bus.csi2.vc = 0;
++		fd->entry[0].bus.csi2.dt = MIPI_CSI2_DT_YUV422_8B;
++	}
++
++	return 0;
++}
++
++static int cam57_set_fmt(struct v4l2_subdev *sd,
++			   struct v4l2_subdev_state *sd_state,
++			   struct v4l2_subdev_format *fmt)
++{
++	struct v4l2_mbus_framefmt *mbus_fmt;
++
++	mbus_fmt = v4l2_subdev_state_get_format(sd_state, fmt->pad);
++	if (!mbus_fmt)
++		return -EINVAL;
++
++	mbus_fmt->code = MEDIA_BUS_FMT_YUYV8_1X16;
++	mbus_fmt->width = 2592;
++	mbus_fmt->height = 1946;
++	mbus_fmt->field = V4L2_FIELD_NONE;
++	mbus_fmt->colorspace = V4L2_COLORSPACE_SRGB;
++
++	fmt->format = *mbus_fmt;
++	return 0;
++}
++
++static int cam57_enable_streams(struct v4l2_subdev *sd,
++				struct v4l2_subdev_state *state,
++				u32 pad, u64 streams_mask)
++{
++	struct cam57_dev *sensor = to_cam57(sd);
++	int ret = 0;
++
++	if (!sensor->streaming) {
++		ret = cam57_sensor_write_reg(sensor, 0x0100, 0x01);
++		if (ret) {
++                    dev_err(sd->dev, "Failed to start stream on 0x0100: %d\n", ret);
++                    return ret;
++		}
++		sensor->streaming = true;
++	}
++
++	return 0;
++}
++
++static int cam57_disable_streams(struct v4l2_subdev *sd,
++				  struct v4l2_subdev_state *state,
++				  u32 pad, u64 streams_mask)
++{
++	struct cam57_dev *sensor = to_cam57(sd);
++
++	if (sensor->streaming) {
++		cam57_sensor_write_reg(sensor, 0x0100, 0x00);
++		sensor->streaming = false;
++	}
++
++	return 0;
++}
++
++static const struct v4l2_mbus_framefmt cam57_def_fmt = {
++	.width = 2592,
++	.height = 1946,
++	.code = MEDIA_BUS_FMT_YUYV8_1X16,
++	.field = V4L2_FIELD_NONE,
++	.colorspace = V4L2_COLORSPACE_SRGB,
++	.ycbcr_enc = V4L2_YCBCR_ENC_DEFAULT,
++	.quantization = V4L2_QUANTIZATION_DEFAULT,
++	.xfer_func = V4L2_XFER_FUNC_DEFAULT,
++};
++
++static int cam57_init_state(struct v4l2_subdev *sd,
++			      struct v4l2_subdev_state *state)
++{
++	struct v4l2_subdev_route routes[] = {
++		{
++			.sink_pad = 0,
++			.sink_stream = 0,
++			.source_pad = 0,
++			.source_stream = 0,
++			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
++		},
++		{
++			.sink_pad = 0,
++			.sink_stream = 1,
++			.source_pad = 0,
++			.source_stream = 1,
++			.flags = V4L2_SUBDEV_ROUTE_FL_ACTIVE,
++		},
++	};
++	struct v4l2_subdev_krouting routing = {
++		.num_routes = ARRAY_SIZE(routes),
++		.routes = routes,
++	};
++
++	return v4l2_subdev_set_routing_with_fmt(sd, state, &routing,
++						&cam57_def_fmt);
++}
++
++static int cam57_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct cam57_dev *sensor =
++		container_of(ctrl->handler, struct cam57_dev, ctrls);
++	int ret = 0;
++
++	switch (ctrl->id) {
++	case V4L2_CID_SATURATION:
++		ret = cam57_set_saturation(sensor, ctrl->val);
++		break;
++	case V4L2_CID_SHARPNESS:
++		ret = cam57_set_sharpness(sensor, ctrl->val);
++		break;
++	case V4L2_CID_CONTRAST:
++		ret = cam57_set_contrast(sensor, ctrl->val);
++		break;
++	case V4L2_CID_BRIGHTNESS:
++		ret = cam57_set_brightness(sensor, ctrl->val);
++		break;
++	case V4L2_CID_EXPOSURE_AUTO:
++		ret = cam57_set_exposure_rgb(sensor, true, 0, 0);
++		break;
++	case V4L2_CID_EXPOSURE_ABSOLUTE:
++		ret = cam57_set_exposure_rgb(sensor, false, ctrl->val, sensor->gain);
++		break;
++	case V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR:
++		ret = cam57_set_exposure_ir(sensor, true, 0, 0);
++		break;
++	case V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR:
++		ret = cam57_set_exposure_ir(sensor, false, ctrl->val, sensor->gain_ir);
++		break;
++	case V4L2_CID_GAIN:
++		sensor->gain = ctrl->val;
++		break;
++	case V4L2_CID_CUSTOM_GAIN_IR:
++		sensor->gain_ir = ctrl->val;
++		break;
++	case V4L2_CID_POWER_LINE_FREQUENCY:
++		ret = cam57_set_power_line_freq(sensor, ctrl->val);
++		break;
++	case V4L2_CID_HFLIP:
++		ret = cam57_set_hflip(sensor, ctrl->val);
++		break;
++	case V4L2_CID_VFLIP:
++		ret = cam57_set_vflip(sensor, ctrl->val);
++		break;
++	default:
++		ret = -EINVAL;
++		break;
++	}
++
++	return ret;
++}
++
++static const struct v4l2_ctrl_ops cam57_ctrl_ops = {
++	.s_ctrl = cam57_s_ctrl,
++};
++
++static const struct v4l2_ctrl_config custom_ctrls[] = {
++	{
++		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
++		.name = "IR Auto Exposure",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 1,
++	},
++	{
++		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR,
++		.name = "IR Exposure Absolute",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 1,
++		.max = 0xFFFF,
++		.step = 1,
++		.def = 100,
++	},
++	{
++		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_GAIN_IR,
++		.name = "IR Global Gain",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 0,
++		.max = 255,
++		.step = 1,
++		.def = 16,
++	},
++};
++
++static int cam57_init_controls(struct cam57_dev *sensor)
++{
++	struct v4l2_ctrl_handler *hdl = &sensor->ctrls;
++	int i, ret;
++
++	v4l2_ctrl_handler_init(hdl, 12);
++
++	/* Standard V4L2 Camera Controls */
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_CONTRAST,
++			  0, 255, 1, 128);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_GAIN,
++			  0, 255, 1, 16);
++
++	v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
++			       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
++			  1, 0xFFFF, 1, 100);
++
++	v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
++			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO, 0,
++			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO);
++
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
++	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
++
++	/* Add Custom RGB-IR & FSync Controls */
++	for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++)
++		v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
++
++	if (hdl->error) {
++		ret = hdl->error;
++		v4l2_ctrl_handler_free(hdl);
++		return ret;
++	}
++
++	sensor->sd.ctrl_handler = hdl;
++	return 0;
++}
++
++static const struct v4l2_subdev_video_ops cam57_video_ops = {
++	.s_stream = cam57_s_stream,
++};
++
++static const struct v4l2_subdev_pad_ops cam57_pad_ops = {
++	.enum_mbus_code = cam57_enum_mbus_code,
++	.enum_frame_size = cam57_enum_frame_size,
++	.get_fmt = cam57_get_fmt,
++	.set_fmt = cam57_set_fmt,
++        .get_frame_desc = cam57_get_frame_desc,
++	.enable_streams = cam57_enable_streams,
++	.disable_streams = cam57_disable_streams,
++};
++
++static const struct v4l2_subdev_ops cam57_subdev_ops = {
++	.video = &cam57_video_ops,
++	.pad = &cam57_pad_ops,
++};
++
++static const struct v4l2_subdev_internal_ops cam57_internal_ops = {
++	.init_state = cam57_init_state,
++};
++
++/* -----------------------------------------------------------------------------
++ * Driver Probe & Runtime PM
++ * -----------------------------------------------------------------------------
++ */
++
++static const struct regmap_config cam57_regmap_config = {
++	.reg_bits = 16,
++	.val_bits = 8,
++	.max_register = 0xffff,
++};
++
++static int cam57_probe(struct i2c_client *client)
++{
++	struct device *dev = &client->dev;
++	struct cam57_dev *sensor;
++	struct fwnode_handle *endpoint;
++        struct v4l2_fwnode_endpoint bus_cfg = {
++		.bus_type = V4L2_MBUS_CSI2_DPHY
++	};
++        int ret;
++
++        ret = cam57_enable_i2c_switch(client);
++	if (ret)
++		return ret;
++
++	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
++	if (!sensor)
++		return -ENOMEM;
++
++	sensor->client  = client;
++	sensor->gain    = 16;
++	sensor->gain_ir = 16;
++
++	endpoint = fwnode_graph_get_endpoint_by_id(dev_fwnode(dev), 0, 0, 0);
++	if (!endpoint) {
++		dev_err(dev, "Failed to find endpoint fwnode in Device Tree\n");
++		return -ENODEV;
++	}
++	dev_info(dev, "found endpoint at %pfwf\n", endpoint);
++
++	ret = v4l2_fwnode_endpoint_parse(endpoint, &bus_cfg);
++	if (ret) {
++		dev_err(dev, "Failed to parse endpoint fwnode: %d\n", ret);
++		return ret;
++	}
++
++	sensor->regmap = devm_regmap_init_i2c(client, &cam57_regmap_config);
++	if (IS_ERR(sensor->regmap))
++		return PTR_ERR(sensor->regmap);
++
++	sensor->reset_gpio = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
++	if (IS_ERR(sensor->reset_gpio)) {
++		ret = dev_err_probe(dev, PTR_ERR(sensor->reset_gpio),
++				    "Failed to get reset GPIO\n");
++		return ret;
++	}
++
++        ret = oax4000_power_on(sensor);
++        if (ret)
++		return ret;
++
++	v4l2_i2c_subdev_init(&sensor->sd, client, &cam57_subdev_ops);
++	sensor->sd.internal_ops = &cam57_internal_ops;
++	sensor->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE | V4L2_SUBDEV_FL_STREAMS;
++	sensor->pad.flags = MEDIA_PAD_FL_SOURCE;
++	sensor->sd.entity.function = MEDIA_ENT_F_CAM_SENSOR;
++
++	ret = cam57_init_controls(sensor);
++        if (ret) {
++		dev_err(dev, "Failed to initialize V4L2 controls: %d\n", ret);
++		goto err_entity_cleanup;
++	}
++
++	/* Bind control handler to subdevice */
++	sensor->sd.ctrl_handler = &sensor->ctrls;
++
++	ret = media_entity_pads_init(&sensor->sd.entity, 1, &sensor->pad);
++	if (ret)
++		goto err_power_off;
++
++	ret = v4l2_subdev_init_finalize(&sensor->sd);
++	if (ret)
++		goto err_power_off;
++
++	ret = v4l2_async_register_subdev(&sensor->sd);
++	if (ret)
++		goto err_subdev_cleanup;
++
++	dev_info(dev, "CAM57 ISP / STURDeCAM57 probed successfully\n");
++	return 0;
++
++err_subdev_cleanup:
++	v4l2_subdev_cleanup(&sensor->sd);
++err_power_off:
++	oax4000_power_off(sensor);
++err_entity_cleanup:
++	media_entity_cleanup(&sensor->sd.entity);
++	return ret;
++}
++
++static void cam57_remove(struct i2c_client *client)
++{
++	struct v4l2_subdev *sd = i2c_get_clientdata(client);
++	struct cam57_dev *sensor = to_cam57(sd);
++
++	v4l2_async_unregister_subdev(sd);
++	v4l2_subdev_cleanup(sd);
++	oax4000_power_off(sensor);
++	media_entity_cleanup(&sd->entity);
++}
++
++static const struct of_device_id cam57_of_match[] = {
++	{ .compatible = "econ,cam57" },
++	{ /* sentinel */ }
++};
++MODULE_DEVICE_TABLE(of, cam57_of_match);
++
++static struct i2c_driver cam57_i2c_driver = {
++	.driver = {
++		.name = "econ-cam57",
++		.of_match_table = cam57_of_match,
++	},
++	.probe = cam57_probe,
++	.remove = cam57_remove,
++};
++module_i2c_driver(cam57_i2c_driver);
++
++MODULE_DESCRIPTION("e-Con CAM57 Driver");
++MODULE_LICENSE("GPL");
