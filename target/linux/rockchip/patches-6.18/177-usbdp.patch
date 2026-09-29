@@ -1,8 +1,8 @@
-Index: linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
-===================================================================
---- linux-6.18.44.orig/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
-+++ linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
-@@ -281,7 +281,9 @@
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
+index 6584d73660f6..7d16bd1a58ec 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
+@@ -281,7 +281,9 @@ dp0 {
  		dp0m0_pins: dp0m0-pins {
  			rockchip,pins =
  				/* dp0_hpdin_m0 */
@@ -13,3 +13,116 @@ Index: linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base-pinctrl.dtsi
  		};
  
  		/omit-if-no-ref/
+diff --git a/drivers/usb/typec/tcpm/fusb302.c b/drivers/usb/typec/tcpm/fusb302.c
+index 5b1f2750cfc3..63a0bdcdd420 100644
+--- a/drivers/usb/typec/tcpm/fusb302.c
++++ b/drivers/usb/typec/tcpm/fusb302.c
+@@ -1343,36 +1343,52 @@ static int fusb302_handle_togdone_src(struct fusb302_chip *chip,
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* determine polarity based on the status of both pins */
+-	if (cc1 == TYPEC_CC_RD &&
+-			(cc2 == TYPEC_CC_OPEN || cc2 == TYPEC_CC_RA)) {
+-		cc_polarity = TYPEC_POLARITY_CC1;
+-	} else if (cc2 == TYPEC_CC_RD &&
+-		    (cc1 == TYPEC_CC_OPEN || cc1 == TYPEC_CC_RA)) {
++	if (cc1 == TYPEC_CC_OPEN && cc2 == TYPEC_CC_OPEN) {
++		fusb302_log(chip, "CC lines open during togdone, restarting toggling");
++		return fusb302_set_toggling(chip, toggling_mode);
++	}
++
++	/* 2. Resolve polarity based on which CC line holds Rd or Ra */
++	if (cc2 == TYPEC_CC_RD || (cc1 == TYPEC_CC_RA && cc2 == TYPEC_CC_RD) ||
++	    (cc1 == TYPEC_CC_OPEN && cc2 == TYPEC_CC_RA)) {
++		/* REVERSED orientation */
+ 		cc_polarity = TYPEC_POLARITY_CC2;
++		cc1 = TYPEC_CC_OPEN;
++		cc2 = TYPEC_CC_RD;
++	} else if (cc1 == TYPEC_CC_RD || (cc1 == TYPEC_CC_RD && cc2 == TYPEC_CC_RA) ||
++		   (cc1 == TYPEC_CC_RA && cc2 == TYPEC_CC_OPEN)) {
++		/* NORMAL orientation */
++		cc_polarity = TYPEC_POLARITY_CC1;
++		cc1 = TYPEC_CC_RD;
++		cc2 = TYPEC_CC_OPEN;
+ 	} else {
++		/* Catch-all for ambiguous transient noise -> restart toggling */
+ 		fusb302_log(chip, "unexpected CC status cc1=%s, cc2=%s, restarting toggling",
+-			    typec_cc_status_name[cc1],
+-			    typec_cc_status_name[cc2]);
++			    typec_cc_status_name[cc1], typec_cc_status_name[cc2]);
+ 		return fusb302_set_toggling(chip, toggling_mode);
+ 	}
+-	/* set polarity and pull_up, pull_down */
++
+ 	ret = fusb302_set_cc_polarity_and_pull(chip, cc_polarity, true, false);
+ 	if (ret < 0) {
+ 		fusb302_log(chip, "cannot set cc polarity %s, ret=%d",
+ 			    cc_polarity_name[cc_polarity], ret);
+ 		return ret;
+ 	}
+-	/* update tcpm with the new cc value */
++
+ 	if ((chip->cc1 != cc1) || (chip->cc2 != cc2)) {
+ 		chip->cc1 = cc1;
+ 		chip->cc2 = cc2;
+ 		tcpm_cc_change(chip->tcpm_port);
+ 	}
++
+ 	/* set MDAC to Rd threshold, and unmask I_COMP for unplug detection */
+ 	ret = fusb302_i2c_write(chip, FUSB_REG_MEASURE, rd_mda);
+ 	if (ret < 0)
+ 		return ret;
++
++	/* Let CC line voltage settle before unmasking comparator interrupt */
++	usleep_range(10000, 15000);
++
+ 	/* unmask comp_chng interrupt */
+ 	ret = fusb302_i2c_clear_bits(chip, FUSB_REG_MASK,
+ 				     FUSB_REG_MASK_COMP_CHNG);
+diff --git a/drivers/usb/typec/tcpm/tcpm.c b/drivers/usb/typec/tcpm/tcpm.c
+index 2209fab8f443..6004d78ce3ae 100644
+--- a/drivers/usb/typec/tcpm/tcpm.c
++++ b/drivers/usb/typec/tcpm/tcpm.c
+@@ -1361,6 +1361,7 @@ static int tcpm_pd_send_sink_caps(struct tcpm_port *port)
+ 
+ static void mod_tcpm_delayed_work(struct tcpm_port *port, unsigned int delay_ms)
+ {
++    tcpm_log(port, "mod_tcpm_delayed_work: %u ms", delay_ms);
+ 	if (delay_ms) {
+ 		hrtimer_start(&port->state_machine_timer, ms_to_ktime(delay_ms), HRTIMER_MODE_REL);
+ 	} else {
+@@ -4836,6 +4837,9 @@ static void run_state_machine(struct tcpm_port *port)
+ 			tcpm_set_state(port, SNK_UNATTACHED, PD_T_DRP_SNK);
+ 		break;
+ 	case SRC_ATTACH_WAIT:
++                tcpm_log(port, "SRC_ATTACH_WAIT check: is_src=%d, vsafe0v=%d, vbus_present=%d, debounce=%u",
++			 tcpm_port_is_source(port), port->vbus_vsafe0v,
++			 port->vbus_present, port->timings.cc_debounce_time);
+ 		if (tcpm_port_is_debug_source(port))
+ 			tcpm_set_state(port, DEBUG_ACC_ATTACHED,
+ 				       port->timings.cc_debounce_time);
+@@ -5938,6 +5942,9 @@ static void tcpm_state_machine_work(struct kthread_work *work)
+ 	mutex_lock(&port->lock);
+ 	port->state_machine_running = true;
+ 
++        tcpm_log(port, "state_machine_work entry: state %s, events 0x%x",
++                 tcpm_states[port->state], port->pd_events);
++
+ 	if (port->queued_message && tcpm_send_queued_message(port))
+ 		goto done;
+ 
+@@ -6492,9 +6499,12 @@ static void tcpm_pd_event_handler(struct kthread_work *work)
+ 		}
+ 		if (events & TCPM_CC_EVENT) {
+ 			enum typec_cc_status cc1, cc2;
++                        int ret = port->tcpc->get_cc(port->tcpc, &cc1, &cc2);
+ 
+-			if (port->tcpc->get_cc(port->tcpc, &cc1, &cc2) == 0)
++			if (ret == 0)
+ 				_tcpm_cc_change(port, cc1, cc2);
++                        else
++                            tcpm_log(port, "get_cc failed: %d", ret);
+ 		}
+ 		if (events & TCPM_FRS_EVENT) {
+ 			if (port->state == SNK_READY) {

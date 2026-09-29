@@ -2278,7 +2278,7 @@ index 000000000000..7edaca44f653
 +#endif
 diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-common.h b/drivers/media/platform/rockchip/rkcif/rkcif-common.h
 new file mode 100644
-index 000000000000..4d9211ba9bda
+index 000000000000..ea92720dfb9b
 --- /dev/null
 +++ b/drivers/media/platform/rockchip/rkcif/rkcif-common.h
 @@ -0,0 +1,250 @@
@@ -2449,7 +2449,6 @@ index 000000000000..4d9211ba9bda
 +	struct mutex vlock;
 +
 +	struct media_pad pad;
-+	struct media_pipeline pipeline;
 +	struct v4l2_pix_format_mplane pix;
 +	struct vb2_queue buf_queue;
 +	struct video_device vdev;
@@ -2473,6 +2472,7 @@ index 000000000000..4d9211ba9bda
 +	unsigned int streams_num;
 +	const struct rkcif_input_fmt *in_fmts;
 +	unsigned int in_fmts_num;
++	struct media_pipeline pipeline;
 +
 +	struct media_pad pads[RKCIF_IF_PAD_MAX];
 +	struct v4l2_fwnode_endpoint vep;
@@ -3505,10 +3505,10 @@ index 000000000000..3cf7ee19de30
 +#endif
 diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-stream.c b/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
 new file mode 100644
-index 000000000000..e00010a91e8b
+index 000000000000..a6e699f63120
 --- /dev/null
 +++ b/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
-@@ -0,0 +1,636 @@
+@@ -0,0 +1,645 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Rockchip Camera Interface (CIF) Driver
@@ -3770,9 +3770,9 @@ index 000000000000..e00010a91e8b
 +	stream->frame_idx = 0;
 +	stream->frame_phase = 0;
 +
-+	ret = video_device_pipeline_start(&stream->vdev, &stream->pipeline);
++	ret = video_device_pipeline_start(&stream->vdev, &stream->interface->pipeline);
 +	if (ret) {
-+		dev_err(rkcif->dev, "failed to start pipeline %d\n", ret);
++		dev_err(rkcif->dev, "Failed to start pipeline: %d\n", ret);
 +		goto err_out;
 +	}
 +
@@ -3783,21 +3783,26 @@ index 000000000000..e00010a91e8b
 +	}
 +
 +	ret = rkcif_stream_init_buffers(stream);
-+	if (ret)
++	if (ret) {
++		dev_err(rkcif->dev, "failed to init buffers, %d\n", ret);
 +		goto err_runtime_put;
++	}
 +
 +	if (stream->start_streaming) {
 +		ret = stream->start_streaming(stream);
-+		if (ret < 0)
++		if (ret < 0) {
++			dev_err(rkcif->dev, "failed to start streaming, %d\n", ret);
 +			goto err_runtime_put;
++		}
 +	}
 +
 +	mask = BIT_ULL(stream->id);
 +	ret = v4l2_subdev_enable_streams(&stream->interface->sd,
 +					 RKCIF_IF_PAD_SRC, mask);
-+	if (ret < 0)
++	if (ret < 0) {
++		dev_err(rkcif->dev, "failed to enable streaming, %d\n", ret);
 +		goto err_stop_stream;
-+
++	}
 +	return 0;
 +
 +err_stop_stream:
@@ -3977,8 +3982,10 @@ index 000000000000..e00010a91e8b
 +	struct rkcif_stream *stream = to_rkcif_stream(vdev);
 +	int ret = -EINVAL;
 +
-+	if (!media_entity_remote_source_pad_unique(link->sink->entity))
++	if (!media_entity_remote_source_pad_unique(link->sink->entity)) {
++		pr_info("rkcif_stream_validate: Source pad not unique\n");
 +		return -ENOTCONN;
++	}
 +
 +	sd = media_entity_to_v4l2_subdev(link->source->entity);
 +
@@ -3986,15 +3993,15 @@ index 000000000000..e00010a91e8b
 +
 +	source_fmt = v4l2_subdev_state_get_format(state, link->source->index,
 +						  stream->id);
-+	if (!source_fmt)
++	if (!source_fmt) {
++		pr_info("rkcif_stream_validate: v4l2_subdev_state_get_format failed for pad %u stream %u on %s\n",
++			link->source->index, stream->id, link->source->entity->name);
 +		goto out;
++	}
 +
 +	if (source_fmt->height != stream->pix.height ||
 +	    source_fmt->width != stream->pix.width) {
-+		dev_dbg(stream->rkcif->dev,
-+			"link '%s':%u -> '%s':%u not valid: %ux%u != %ux%u\n",
-+			link->source->entity->name, link->source->index,
-+			link->sink->entity->name, link->sink->index,
++		pr_info("rkcif_stream_validate: resolution mismatch: %ux%u != %ux%u\n",
 +			source_fmt->width, source_fmt->height,
 +			stream->pix.width, stream->pix.height);
 +		goto out;
@@ -4142,8 +4149,10 @@ index 000000000000..e00010a91e8b
 +
 +	if (ret_def)
 +		return &stream->out_fmts[0];
-+	else
++	else {
++		dev_err(stream->rkcif->dev, "invalid pixel format, %x\n", pixelfmt);
 +		return NULL;
++	}
 +}
 diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-stream.h b/drivers/media/platform/rockchip/rkcif/rkcif-stream.h
 new file mode 100644
