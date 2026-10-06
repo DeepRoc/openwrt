@@ -20,6 +20,7 @@
 #include "rk3588-rkvenc-mpp.dtsi"
 
 #define ENABLE_CAM31 1
+#define ENABLE_CAM57 1
 
 / {
 	model = "FriendlyElec CM3588 GMSL";
@@ -461,6 +462,7 @@
             };
 #endif
 
+#if ENABLE_CAM57
             /* STURDeCAM57 on Link B */
             port@1 {
                 reg = <1>;
@@ -468,7 +470,7 @@
                     remote-endpoint = <&ser_1_gmsl_out>;
                 };
             };
-
+#endif
 
 #if ENABLE_CAM31
             /* Pad 4: MIPI PHY 0 (2-lane CAM31) */
@@ -481,15 +483,16 @@
             };
 #endif
 
+#if ENABLE_CAM57
             /* Pad 6: MIPI PHY 2/3 (4-lane CAM57) */
             port@6 {
                 reg = <6>;
                 gmsl_out_csi4: endpoint {
                     remote-endpoint = <&mipi_csi4_in>;
                     data-lanes = <1 2 3 4>;
-                    link-frequencies = /bits/ 64 <750000000>;
                 };
             };
+#endif
         };
 
         i2c-atr {
@@ -544,6 +547,7 @@
             };
 #endif
 
+#if ENABLE_CAM57
             /* Link 1: STURDeCAM57 (OmniVision OX05B1S) */
             i2c@1 {
                 #address-cells = <1>;
@@ -577,17 +581,18 @@
                     };
                 };
             };
+#endif
         };
     };
 
+#if ENABLE_CAM57
     /*
      * Define CAM57 outside the i2c-atr because it manages its own
-     * pca9640 I2C mux connected to the MAX96717 serializer.
+     * pca9640 I2C switch at 0x70 connected to the MAX96717 serializer.
      */
     camera_b: sensor@24 {
         compatible = "econ,cam57";
         reg = <0x24>;
-        reset-gpios = <&serializer_b 4 GPIO_ACTIVE_LOW>;
 
         port {
              camera_b_out: endpoint {
@@ -596,16 +601,17 @@
              };
         };
     };
+#endif
 };
 
 /* =================================================================
  * 2. MIPI D-PHY0 & CSI2 Host Controller (CAM31 - 2 Lanes, ISP Bypass)
  * ================================================================= */
-#if ENABLE_CAM31
 &csi_dphy0 {
         status = "okay";
 };
 
+#if ENABLE_CAM31
 &csi2 {
 	status = "okay";
         phys = <&csi_dphy0>;
@@ -642,6 +648,7 @@
         status = "okay";
 };
 
+#if ENABLE_CAM57
 &csi4 {
 	status = "okay";
         phys = <&csi_dphy1>;
@@ -678,6 +685,7 @@
 		};
 	};
 };
+#endif
 
 /* =================================================================
  * Enable VICAP & VICAP System MMU
@@ -696,6 +704,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
+#if ENABLE_CAM57
 			/* CAM57 VC0 (RGB) Input from CSI4 */
 			port@0 {
 				reg = <0>;
@@ -711,7 +720,7 @@
 					remote-endpoint = <&mipi_csi4_out1>;
 				};
 			};
-
+#endif
 #if ENABLE_CAM31
 			/* CAM31 Input from CSI2 (Bypass Path) */
 			port@2 {

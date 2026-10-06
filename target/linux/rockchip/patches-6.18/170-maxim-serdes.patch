@@ -4282,10 +4282,10 @@ index 000000000000..3dcdb63dbb9e
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max96717.c b/drivers/media/i2c/maxim-serdes/max96717.c
 new file mode 100644
-index 000000000000..7aaed6aab83a
+index 000000000000..93af16711bcd
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max96717.c
-@@ -0,0 +1,1707 @@
+@@ -0,0 +1,1715 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Maxim MAX96717 GMSL2 Serializer Driver
@@ -4433,6 +4433,7 @@ index 000000000000..7aaed6aab83a
 +
 +#define MAX96717_MIPI_RX1			0x331
 +#define MAX96717_MIPI_RX1_CTRL_NUM_LANES	GENMASK(5, 4)
++#define MAX96717_MIPI_RX1_DESKEW_EN		BIT(6)
 +
 +#define MAX96717_MIPI_RX2			0x332
 +#define MAX96717_MIPI_RX2_PHY1_LANE_MAP		GENMASK(7, 4)
@@ -4879,7 +4880,6 @@ index 000000000000..7aaed6aab83a
 +	case PIN_CONFIG_BIAS_PULL_DOWN:
 +	case PIN_CONFIG_BIAS_PULL_UP:
 +		val = field_prep(mask, en_val);
-+
 +		ret = regmap_update_bits(priv->regmap, reg, mask, val);
 +		break;
 +	case MAX96717_PINCTRL_JITTER_COMPENSATION_EN:
@@ -4890,7 +4890,6 @@ index 000000000000..7aaed6aab83a
 +	case PIN_CONFIG_INPUT_ENABLE:
 +	case PIN_CONFIG_LEVEL:
 +		val = field_prep(mask, arg ? en_val : ~en_val);
-+
 +		ret = regmap_update_bits(priv->regmap, reg, mask, val);
 +		break;
 +	case MAX96717_PINCTRL_TX_ID:
@@ -5110,7 +5109,8 @@ index 000000000000..7aaed6aab83a
 +		 */
 +		reg = MAX96717_EXTA(i - 2);
 +
-+	return regmap_assign_bits(priv->regmap, reg, MAX96717_MEM_DT_EN, enable);
++	return regmap_update_bits(priv->regmap, reg, MAX96717_MEM_DT_EN,
++                                  FIELD_PREP(MAX96717_MEM_DT_EN, enable));
 +}
 +
 +static int max96717_set_pipe_dt(struct max_ser *ser, struct max_ser_pipe *pipe,
@@ -5234,11 +5234,15 @@ index 000000000000..7aaed6aab83a
 +		return -EINVAL;
 +	}
 +
-+	/* Configure a lane count. */
-+	ret = regmap_update_bits(priv->regmap, MAX96717_MIPI_RX1,
-+				 MAX96717_MIPI_RX1_CTRL_NUM_LANES,
-+				 FIELD_PREP(MAX96717_MIPI_RX1_CTRL_NUM_LANES,
-+					    num_data_lanes - 1));
++	/*
++	 * Configure the lane count and deskew
++	 * The max9295a has two MIPI-CSI ports in the upper and lower 4-bits of MIPI_RX1.
++	 * Configure both even though the max92717 has the lower 4-bits RSVD.
++	 */
++	val = FIELD_PREP(MAX96717_MIPI_RX1_CTRL_NUM_LANES, num_data_lanes - 1);
++	val |= MAX96717_MIPI_RX1_DESKEW_EN;
++	val |= (val >> 4);
++	ret = regmap_write(priv->regmap, MAX96717_MIPI_RX1, val);
 +	if (ret)
 +		return ret;
 +
@@ -5299,7 +5303,6 @@ index 000000000000..7aaed6aab83a
 +		if (ret)
 +			return ret;
 +	}
-+
 +	return 0;
 +}
 +
@@ -5801,7 +5804,7 @@ index 000000000000..7aaed6aab83a
 +	.determine_rate = max96717_clk_determine_rate,
 +};
 +
-+static int max96717_register_clkout(struct max96717_priv *priv)
++static __maybe_unused int max96717_register_clkout(struct max96717_priv *priv)
 +{
 +	struct device *dev = &priv->client->dev;
 +	struct clk_init_data init = { .ops = &max96717_clk_ops };
@@ -5933,10 +5936,15 @@ index 000000000000..7aaed6aab83a
 +	if (ret)
 +		return ret;
 +
++	/*
++	 * Remove the 25mhz reference clock output on GPIO4 for now because this
++	 * pin is used as a RESET pin on both the e-con cameras.
++	 */
++#if 0
 +	ret = max96717_register_clkout(priv);
 +	if (ret)
 +		return ret;
-+
++#endif
 +	return max_ser_probe(client, &priv->ser);
 +}
 +
@@ -5995,7 +6003,7 @@ index 000000000000..7aaed6aab83a
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max96724.c b/drivers/media/i2c/maxim-serdes/max96724.c
 new file mode 100644
-index 000000000000..243755c49c9d
+index 000000000000..1a3999d4a3f0
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max96724.c
 @@ -0,0 +1,1285 @@
@@ -6328,7 +6336,7 @@ index 000000000000..243755c49c9d
 +				    struct max_des_pipe *pipe)
 +{
 +	struct max96724_priv *priv = des_to_priv(des);
-+	unsigned int index = pipe->index;
++	unsigned int index = pipe->phy_id;
 +	unsigned int val, mask;
 +	int ret;
 +
@@ -6505,10 +6513,11 @@ index 000000000000..243755c49c9d
 +	dpll_freq = is_cphy ? phy->link_frequency
 +			    : phy->link_frequency * 2;
 +
++        mask = MAX96724_MIPI_TX10_CSI2_LANE_CNT;
++        val = FIELD_PREP(MAX96724_MIPI_TX10_CSI2_LANE_CNT, num_data_lanes - 1);
++        //        dev_info(priv->dev, "tx10[%d] lanes=%d mask=%02x val=%02x\n", index, num_data_lanes, mask, val);
 +	ret = regmap_update_bits(priv->regmap, MAX96724_MIPI_TX10(index),
-+				 MAX96724_MIPI_TX10_CSI2_LANE_CNT,
-+				 FIELD_PREP(MAX96724_MIPI_TX10_CSI2_LANE_CNT,
-+					    num_data_lanes - 1));
++				 mask, val);
 +	if (ret)
 +		return ret;
 +
@@ -6705,8 +6714,7 @@ index 000000000000..243755c49c9d
 +				   struct max_des_remap *remap)
 +{
 +	struct max96724_priv *priv = des_to_priv(des);
-+	unsigned int phy_id = pipe->phy_id;
-+	unsigned int index = pipe->index;
++	unsigned int index = pipe->phy_id;
 +	u8 src_val, dst_val;
 +	int ret;
 +
@@ -6731,7 +6739,7 @@ index 000000000000..243755c49c9d
 +
 +	return regmap_update_bits(priv->regmap, MAX96724_MIPI_TX45(index, i),
 +				  MAX96724_MIPI_TX45_MAP_DPHY_DEST(i),
-+				  field_prep(MAX96724_MIPI_TX45_MAP_DPHY_DEST(i), phy_id));
++				  field_prep(MAX96724_MIPI_TX45_MAP_DPHY_DEST(i), index));
 +}
 +
 +static int max96724_set_pipe_remaps_enable(struct max_des *des,
@@ -7286,7 +7294,7 @@ index 000000000000..243755c49c9d
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max_des.c b/drivers/media/i2c/maxim-serdes/max_des.c
 new file mode 100644
-index 000000000000..17ef347225e9
+index 000000000000..441d14cbbc0b
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_des.c
 @@ -0,0 +1,3467 @@
@@ -10573,7 +10581,7 @@ index 000000000000..17ef347225e9
 +			priv->inactive_poll_count = 60;
 +			if (des->ops->select_links) {
 +				des->ops->select_links(des, configured_mask);
-+				msleep(25);
++				msleep(50);
 +				links_changed = true;
 +			}
 +		}
@@ -10933,7 +10941,7 @@ index 000000000000..359d54dacdb3
 +#endif // MAX_DES_H
 diff --git a/drivers/media/i2c/maxim-serdes/max_ser.c b/drivers/media/i2c/maxim-serdes/max_ser.c
 new file mode 100644
-index 000000000000..29034817bd45
+index 000000000000..39b21164e4c5
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_ser.c
 @@ -0,0 +1,2342 @@
@@ -13149,7 +13157,7 @@ index 000000000000..29034817bd45
 +	if (!sensor_sd || !sensor_sd->v4l2_dev)
 +		return -ENODEV;
 +
-+	dev_info(priv->dev, "Reseting to camera %s\n", sensor_sd->name);
++	dev_info(priv->dev, "Resetting camera %s\n", sensor_sd->name);
 +	v4l2_subdev_call(sensor_sd, core, reset, val);
 +	return 0;
 +}
