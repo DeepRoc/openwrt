@@ -1295,7 +1295,7 @@ new file mode 100644
 index 000000000000..de9d927931c0
 --- /dev/null
 +++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
-@@ -0,0 +1,950 @@
+@@ -0,0 +1,956 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Rockchip Camera Interface (CIF) Driver
@@ -1829,6 +1829,12 @@ index 000000000000..de9d927931c0
 +	ctrl0 |= RKCIF_MIPI_CTRL0_DT_ID(active_out_fmt->mipi.dt);
 +	ctrl0 |= RK3588_MIPI_CTRL0_CROP_EN;
 +	ctrl0 |= RKCIF_MIPI_CTRL0_CAP_EN;
++
++	/* RK3588 UYVY needs YUV422 parsing and packed YUV DMA output. */
++	if (active_out_fmt->fourcc == V4L2_PIX_FMT_UYVY) {
++		ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
++		ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
++	}
 +
 +	switch (active_out_fmt->mipi.type) {
 +	case RKCIF_MIPI_TYPE_RAW8:
