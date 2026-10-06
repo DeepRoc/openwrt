@@ -435,9 +435,9 @@
     status = "okay";
     clock-frequency = <400000>;
 
-    gmsl_deser: deserializer@2e {
+    gmsl_deser: deserializer@27 {
         compatible = "maxim,max96724";
-        reg = <0x2e>;
+        reg = <0x27>;
 
         i2c-alias-pool = <0x64 0x65 0x66 0x67 0x68 0x69 0x6a 0x6b>;
 
