@@ -1292,10 +1292,10 @@ index 000000000000..a4ed37833bd6
 +#endif
 diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
 new file mode 100644
-index 000000000000..de9d927931c0
+index 000000000000..ef3a2426ba84
 --- /dev/null
 +++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
-@@ -0,0 +1,956 @@
+@@ -0,0 +1,1009 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Rockchip Camera Interface (CIF) Driver
@@ -1719,6 +1719,12 @@ index 000000000000..de9d927931c0
 +	ctrl0 |= RKCIF_MIPI_CTRL0_CAP_EN;
 +	ctrl0 |= RK3568_MIPI_CTRL0_CROP_EN;
 +
++       /* RK3588 UYVY needs YUV422 parsing and packed YUV DMA output. */
++       if (active_out_fmt->fourcc == V4L2_PIX_FMT_UYVY) {
++               ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
++               ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
++       }
++
 +	if (active_out_fmt->mipi.compact)
 +		ctrl0 |= RK3568_MIPI_CTRL0_COMPACT_EN;
 +
@@ -1829,12 +1835,6 @@ index 000000000000..de9d927931c0
 +	ctrl0 |= RKCIF_MIPI_CTRL0_DT_ID(active_out_fmt->mipi.dt);
 +	ctrl0 |= RK3588_MIPI_CTRL0_CROP_EN;
 +	ctrl0 |= RKCIF_MIPI_CTRL0_CAP_EN;
-+
-+	/* RK3588 UYVY needs YUV422 parsing and packed YUV DMA output. */
-+	if (active_out_fmt->fourcc == V4L2_PIX_FMT_UYVY) {
-+		ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
-+		ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
-+	}
 +
 +	switch (active_out_fmt->mipi.type) {
 +	case RKCIF_MIPI_TYPE_RAW8:
@@ -2055,6 +2055,53 @@ index 000000000000..de9d927931c0
 +				buffer->buff_addr[RKCIF_PLANE_UV]);
 +}
 +
++/* Resolve the wire VC independently of the local DMA/stream number. */
++static int rkcif_mipi_get_vc(struct rkcif_stream *stream,
++			   struct v4l2_subdev_state *state, u8 *vc)
++{
++	struct rkcif_interface *interface = stream->interface;
++	struct v4l2_mbus_frame_desc fd = {};
++	struct v4l2_subdev *remote_sd;
++	struct media_pad *remote_pad;
++	u32 sink_pad, sink_stream;
++	unsigned int i;
++	int ret;
++
++	ret = v4l2_subdev_routing_find_opposite_end(&state->routing,
++						    RKCIF_IF_PAD_SRC, stream->id,
++						    &sink_pad, &sink_stream);
++	if (ret)
++		return ret;
++
++	remote_pad = media_pad_remote_pad_first(&interface->pads[sink_pad]);
++	if (!remote_pad)
++		return -ENOLINK;
++
++	remote_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
++	ret = v4l2_subdev_call(remote_sd, pad, get_frame_desc,
++			       remote_pad->index, &fd);
++	if (ret == -ENOIOCTLCMD && !sink_stream) {
++		/* Preserve the legacy VC0 path for sources without descriptors. */
++		*vc = 0;
++		return 0;
++	}
++	if (ret)
++		return ret;
++	if (fd.type != V4L2_MBUS_FRAME_DESC_TYPE_CSI2)
++		return -EINVAL;
++
++	for (i = 0; i < fd.num_entries; i++) {
++		if (fd.entry[i].stream != sink_stream)
++			continue;
++		if (fd.entry[i].bus.csi2.vc > 3)
++			return -EINVAL;
++		*vc = fd.entry[i].bus.csi2.vc;
++		return 0;
++	}
++
++	return -EPIPE;
++}
++
 +static int rkcif_mipi_start_streaming(struct rkcif_stream *stream)
 +{
 +	struct rkcif_interface *interface = stream->interface;
@@ -2063,6 +2110,7 @@ index 000000000000..de9d927931c0
 +	struct v4l2_subdev_state *state;
 +	u32 ctrl0 = 0, ctrl1 = 0, int_temp = 0, int_mask = 0, vlw = 0;
 +	u16 height, width;
++	u8 vc;
 +	int ret = -EINVAL;
 +
 +	state = v4l2_subdev_lock_and_get_active_state(&interface->sd);
@@ -2072,6 +2120,10 @@ index 000000000000..de9d927931c0
 +	if (!active_out_fmt)
 +		goto out;
 +
++	ret = rkcif_mipi_get_vc(stream, state, &vc);
++	if (ret)
++		goto out;
++
 +	height = stream->pix.height;
 +	width = stream->pix.width;
 +	vlw = stream->pix.plane_fmt[0].bytesperline;
@@ -2079,6 +2131,7 @@ index 000000000000..de9d927931c0
 +	match_data = stream->rkcif->match_data->mipi;
 +	if (match_data->mipi_ctrl0)
 +		ctrl0 = match_data->mipi_ctrl0(stream, active_out_fmt);
++	ctrl0 |= RKCIF_MIPI_CTRL0_VC_ID(vc);
 +
 +	ctrl1 = RKCIF_XY_COORD(width, height);
 +
@@ -4235,10 +4288,10 @@ index 3b12c574dd67..e0232ee23304 100644
 +obj-$(CONFIG_VIDEO_DW_MIPI_CSI2RX) += dw-mipi-csi2rx.o
 diff --git a/drivers/media/platform/synopsys/dw-mipi-csi2rx.c b/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
 new file mode 100644
-index 000000000000..6a17a4b5b74c
+index 000000000000..2710433096fb
 --- /dev/null
 +++ b/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
-@@ -0,0 +1,729 @@
+@@ -0,0 +1,788 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Synopsys DesignWare MIPI CSI-2 Receiver Driver
@@ -4676,11 +4729,70 @@ index 000000000000..6a17a4b5b74c
 +	return ret;
 +}
 +
++static int dw_mipi_csi2rx_get_frame_desc(struct v4l2_subdev *sd,
++				       unsigned int pad,
++				       struct v4l2_mbus_frame_desc *fd)
++{
++	struct v4l2_mbus_frame_desc upstream = {};
++	struct v4l2_subdev_state *state;
++	struct v4l2_subdev_route *route;
++	struct v4l2_subdev *remote_sd;
++	struct media_pad *remote_pad;
++	unsigned int i;
++	int ret;
++
++	if (pad != DW_MIPI_CSI2RX_PAD_SRC)
++		return -EINVAL;
++
++	state = v4l2_subdev_lock_and_get_active_state(sd);
++	remote_pad = media_pad_remote_pad_first(&sd->entity.pads[DW_MIPI_CSI2RX_PAD_SINK]);
++	if (!remote_pad) {
++		ret = -ENOLINK;
++		goto out;
++	}
++
++	remote_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
++	ret = v4l2_subdev_call(remote_sd, pad, get_frame_desc,
++			       remote_pad->index, &upstream);
++	if (ret)
++		goto out;
++
++	fd->type = upstream.type;
++	fd->num_entries = 0;
++	for_each_active_route(&state->routing, route) {
++		if (route->source_pad != pad)
++			continue;
++
++		for (i = 0; i < upstream.num_entries; i++)
++			if (upstream.entry[i].stream == route->sink_stream)
++				break;
++		if (i == upstream.num_entries) {
++			ret = -EPIPE;
++			goto out;
++		}
++		if (fd->num_entries == V4L2_FRAME_DESC_ENTRY_MAX) {
++			ret = -E2BIG;
++			goto out;
++		}
++
++		/* Forward VC/DT unchanged; only the logical stream ID changes. */
++		fd->entry[fd->num_entries] = upstream.entry[i];
++		fd->entry[fd->num_entries].stream = route->source_stream;
++		fd->num_entries++;
++	}
++
++	ret = 0;
++out:
++	v4l2_subdev_unlock_state(state);
++	return ret;
++}
++
 +static const struct v4l2_subdev_pad_ops dw_mipi_csi2rx_pad_ops = {
 +	.enum_mbus_code = dw_mipi_csi2rx_enum_mbus_code,
 +	.get_fmt = v4l2_subdev_get_fmt,
 +	.set_fmt = dw_mipi_csi2rx_set_fmt,
 +	.set_routing = dw_mipi_csi2rx_set_routing,
++	.get_frame_desc = dw_mipi_csi2rx_get_frame_desc,
 +	.enable_streams = dw_mipi_csi2rx_enable_streams,
 +	.disable_streams = dw_mipi_csi2rx_disable_streams,
 +};
