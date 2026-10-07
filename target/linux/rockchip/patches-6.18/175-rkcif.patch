@@ -1719,12 +1719,6 @@ index 000000000000..ef3a2426ba84
 +	ctrl0 |= RKCIF_MIPI_CTRL0_CAP_EN;
 +	ctrl0 |= RK3568_MIPI_CTRL0_CROP_EN;
 +
-+       /* RK3588 UYVY needs YUV422 parsing and packed YUV DMA output. */
-+       if (active_out_fmt->fourcc == V4L2_PIX_FMT_UYVY) {
-+               ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
-+               ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
-+       }
-+
 +	if (active_out_fmt->mipi.compact)
 +		ctrl0 |= RK3568_MIPI_CTRL0_COMPACT_EN;
 +
@@ -1835,6 +1829,12 @@ index 000000000000..ef3a2426ba84
 +	ctrl0 |= RKCIF_MIPI_CTRL0_DT_ID(active_out_fmt->mipi.dt);
 +	ctrl0 |= RK3588_MIPI_CTRL0_CROP_EN;
 +	ctrl0 |= RKCIF_MIPI_CTRL0_CAP_EN;
++
++       /* RK3588 UYVY needs YUV422 parsing and packed YUV DMA output. */
++       if (active_out_fmt->fourcc == V4L2_PIX_FMT_UYVY) {
++               ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
++               ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
++       }
 +
 +	switch (active_out_fmt->mipi.type) {
 +	case RKCIF_MIPI_TYPE_RAW8:
