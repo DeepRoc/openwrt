@@ -40,10 +40,10 @@ index 57cdd8dc96f6..01a299c8eefe 100644
  obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
 diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
 new file mode 100644
-index 000000000000..04ebbe5cc706
+index 000000000000..c04ab0438d66
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam31.c
-@@ -0,0 +1,1454 @@
+@@ -0,0 +1,1682 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM31 containing Sony isx031 sensor.
@@ -68,6 +68,7 @@ index 000000000000..04ebbe5cc706
 +
 +/* ST Bootloader Commands */
 +#define BL_GET_VERSION                0x01
++#define BL_READ_MEM                   0x11
 +#define BL_GO                         0x21
 +#define BL_WRITE_MEM_NS               0x32
 +#define BL_ERASE_MEM_NS               0x45
@@ -75,6 +76,8 @@ index 000000000000..04ebbe5cc706
 +#define RESP_BUSY                     0x76
 +
 +#define FLASH_START_ADDRESS           0x08000000
++#define CAM31_MCU_FLASH_SIZE           (192 * 1024)
++#define CAM31_ISP_FLASH_SIZE           (512 * 1024)
 +#define ISX_BUFFER_SIZE               256
 +
 +/* Protocol Framing Constants */
@@ -190,13 +193,14 @@ index 000000000000..04ebbe5cc706
 +};
 +
 +struct cam31_ctrl {
-+    u32 v4l2_cid;       /* Mapped V4L2 Control ID */
-+    u8  ctrl_type;      /* 0x01 = Standard, 0x02 = Extended */
-+    s32 min;
-+    s32 max;
-+    s32 def;
-+    s32 step;
-+    struct v4l2_ctrl *ctrl;
++	u32 v4l2_cid;       /* Mapped V4L2 Control ID */
++	u8  ctrl_type;      /* 0x01 = Standard, 0x02 = Extended */
++	u16 index;          /* Index of control in CAM31 */
++	s32 min;
++	s32 max;
++	s32 def;
++	s32 step;
++	struct v4l2_ctrl *ctrl;
 +};
 +
 +struct cam31_dev {
@@ -233,7 +237,11 @@ index 000000000000..04ebbe5cc706
 +		.len = len,
 +		.buf = buf,
 +	};
-+	return (i2c_transfer(client->adapter, &msg, 1) == 1) ? 0 : -EIO;
++	int ret = i2c_transfer(client->adapter, &msg, 1);
++
++	if (ret < 0)
++		return ret;
++	return ret == 1 ? 0 : -EIO;
 +}
 +
 +static int cam31_write_tx(struct i2c_client *client, const u8 *buf, u32 len)
@@ -244,7 +252,11 @@ index 000000000000..04ebbe5cc706
 +		.len = len,
 +		.buf = (u8 *)buf,
 +	};
-+	return (i2c_transfer(client->adapter, &msg, 1) == 1) ? 0 : -EIO;
++	int ret = i2c_transfer(client->adapter, &msg, 1);
++
++	if (ret < 0)
++		return ret;
++	return ret == 1 ? 0 : -EIO;
 +}
 +
 +static u8 cam31_checksum(const u8 *data, size_t len)
@@ -264,28 +276,35 @@ index 000000000000..04ebbe5cc706
 +
 +static int mcu_ascii2hex(u8 ascii)
 +{
-+	if (ascii <= '9') return ascii - '0';
-+	if (ascii >= 'a' && ascii <= 'f') return 0xA + (ascii - 'a');
-+	if (ascii >= 'A' && ascii <= 'F') return 0xA + (ascii - 'A');
++	if (ascii >= '0' && ascii <= '9')
++		return ascii - '0';
++	if (ascii >= 'a' && ascii <= 'f')
++		return 0xa + ascii - 'a';
++	if (ascii >= 'A' && ascii <= 'F')
++		return 0xa + ascii - 'A';
 +	return -EINVAL;
 +}
 +
-+static int mcu_parse_hex_line(const u8 *ascii_buf, u8 *bin_buf, int ascii_len)
++static int mcu_parse_hex_line(const u8 *ascii, u8 *record, size_t len)
 +{
 +	u8 checksum = 0;
-+	int i, bin_len = 0;
++	size_t i;
++	int hi, lo;
 +
-+	for (i = 0; i < ascii_len; i += 2) {
-+		int hi = mcu_ascii2hex(ascii_buf[i]);
-+		int lo = mcu_ascii2hex(ascii_buf[i + 1]);
-+		if (hi < 0 || lo < 0) return -EINVAL;
-+
-+		bin_buf[bin_len] = (hi << 4) | lo;
-+		checksum += bin_buf[bin_len];
-+		bin_len++;
++	/* Byte count, address, type and checksum, plus at most 255 data bytes. */
++	if (len < 10 || len > 2 * (255 + 5) || len % 2)
++		return -EINVAL;
++	for (i = 0; i < len / 2; i++) {
++		hi = mcu_ascii2hex(ascii[2 * i]);
++		lo = mcu_ascii2hex(ascii[2 * i + 1]);
++		if (hi < 0 || lo < 0)
++			return -EINVAL;
++		record[i] = (hi << 4) | lo;
++		checksum += record[i];
 +	}
-+
-+	return (checksum == 0) ? bin_len : -EILSEQ;
++	if (len / 2 != record[0] + 5)
++		return -EINVAL;
++	return checksum ? -EILSEQ : 0;
 +}
 +
 +/* ========================================================================= */
@@ -295,6 +314,25 @@ index 000000000000..04ebbe5cc706
 +#define MAX_PAGES         512
 +#define TOTAL_PAGES       1536
 +#define NUM_ERASE_CYCLES  (TOTAL_PAGES / MAX_PAGES)
++
++static int mcu_bootloader_wait_ack(struct i2c_client *client, unsigned int timeout_ms)
++{
++	u8 ack;
++	unsigned int elapsed;
++	int ret;
++
++	for (elapsed = 0; elapsed < timeout_ms; elapsed += 20) {
++		msleep(20);
++		ret = cam31_read_rx(client, &ack, 1);
++		if (ret)
++			return ret;
++		if (ack == RESP_ACK)
++			return 0;
++		if (ack != RESP_BUSY)
++			return -EIO;
++	}
++	return -ETIMEDOUT;
++}
 +
 +static int mcu_bootloader_erase(struct i2c_client *client)
 +{
@@ -343,14 +381,9 @@ index 000000000000..04ebbe5cc706
 +			goto out;
 +		}
 +
-+		do {
-+			msleep(20);
-+			ret = cam31_read_rx(client, buf, 1);
-+		} while (!ret && buf[0] == RESP_BUSY);
-+
-+		if (ret || buf[0] != RESP_ACK) {
-+			dev_err(&client->dev, "Erase cycle %d failed (status: 0x%02x)\n", i, buf[0]);
-+			ret = -EIO;
++		ret = mcu_bootloader_wait_ack(client, 30000);
++		if (ret) {
++			dev_err(&client->dev, "Erase cycle %d failed: %d\n", i, ret);
 +			goto out;
 +		}
 +	}
@@ -362,11 +395,15 @@ index 000000000000..04ebbe5cc706
 +	return ret;
 +}
 +
-+static int mcu_bootloader_write_page(struct i2c_client *client, u32 flash_addr, const u8 *data, u8 len)
++static int mcu_bootloader_write_page(struct i2c_client *client, u32 flash_addr,
++				     const u8 *data, u16 len)
 +{
 +	u8 buf[260];
 +	u8 checksum = 0;
 +	int i;
++
++	if (!len || len > 256)
++		return -EINVAL;
 +
 +	if (flash_addr % 4096 == 0)
 +		dev_info(&client->dev, "   loading MCU at %8x...", flash_addr);
@@ -394,17 +431,7 @@ index 000000000000..04ebbe5cc706
 +
 +	if (cam31_write_tx(client, buf, len + 2))
 +		return -EIO;
-+	while (true) {
-+		if (cam31_read_rx(client, buf, 1))
-+			return -EIO;
-+		if (buf[0] == RESP_ACK)
-+			break;
-+		if (buf[0] == RESP_BUSY)
-+			usleep_range(1000, 2000);
-+		else
-+			return -EIO;
-+	}
-+	return 0;
++	return mcu_bootloader_wait_ack(client, 5000);
 +}
 +
 +static int mcu_bootloader_go(struct i2c_client *client, u32 start_addr)
@@ -429,47 +456,116 @@ index 000000000000..04ebbe5cc706
 +	return -EIO;
 +}
 +
-+static int mcu_flash_intel_hex(struct i2c_client *client, const u8 *hex_data, size_t size)
++static int mcu_bootloader_read_page(struct i2c_client *client, u32 address,
++				    u8 *data, u16 len)
 +{
-+	u32 line_start = 0, line_end = 0;
-+	u32 upper_addr = 0x00000000;
-+	u8 parsed[256];
++	u8 packet[5], ack;
++
++	if (!len || len > 256)
++		return -EINVAL;
++	packet[0] = BL_READ_MEM;
++	packet[1] = (u8)~BL_READ_MEM;
++	if (cam31_write_tx(client, packet, 2) ||
++	    cam31_read_rx(client, &ack, 1) || ack != RESP_ACK)
++		return -EIO;
++	packet[0] = address >> 24;
++	packet[1] = address >> 16;
++	packet[2] = address >> 8;
++	packet[3] = address;
++	packet[4] = cam31_checksum(packet, 4);
++	if (cam31_write_tx(client, packet, 5) ||
++	    cam31_read_rx(client, &ack, 1) || ack != RESP_ACK)
++		return -EIO;
++	packet[0] = len - 1;
++	packet[1] = (u8)~packet[0];
++	if (cam31_write_tx(client, packet, 2) ||
++	    cam31_read_rx(client, &ack, 1) || ack != RESP_ACK)
++		return -EIO;
++	return cam31_read_rx(client, data, len);
++}
++
++static int mcu_walk_hex(struct i2c_client *client, const u8 *data, size_t size,
++			bool program)
++{
++	u8 record[255 + 5], verify[256];
++	u32 upper = 0, address;
++	size_t start = 0, end;
++	bool vectors = false, eof = false;
++	u16 low;
++	u8 len, type;
 +	int ret;
 +
-+	ret = mcu_bootloader_erase(client);
-+	if (ret) return ret;
-+
-+	while (line_start < size) {
-+		while (line_end < size && hex_data[line_end] != '\n' && hex_data[line_end] != '\r')
-+			line_end++;
-+
-+		if (hex_data[line_start] == ':') {
-+			int ascii_len = line_end - (line_start + 1);
-+			int bin_len = mcu_parse_hex_line(&hex_data[line_start + 1], parsed, ascii_len);
-+
-+			if (bin_len > 0) {
-+				u8 len = parsed[0];
-+				u16 low_addr = (parsed[1] << 8) | parsed[2];
-+				u8 type = parsed[3];
-+				u8 *payload = &parsed[4];
-+
-+				if (type == 0x04 && len == 2) {
-+					upper_addr = ((payload[0] << 8) | payload[1]) << 16;
-+				} else if (type == 0x00) {
-+					u32 target_addr = upper_addr | low_addr;
-+					ret = mcu_bootloader_write_page(client, target_addr, payload, len);
-+					if (ret) return ret;
-+				} else if (type == 0x01) {
-+					break;
-+				}
-+			}
++	while (start < size) {
++		if (data[start] == '\n' || data[start] == '\r') {
++			start++;
++			continue;
 +		}
-+
-+		while (line_end < size && (hex_data[line_end] == '\n' || hex_data[line_end] == '\r'))
-+			line_end++;
-+		line_start = line_end;
++		if (eof || data[start] != ':')
++			return -EINVAL;
++		for (end = start + 1; end < size && data[end] != '\n' && data[end] != '\r'; end++)
++			;
++		ret = mcu_parse_hex_line(&data[start + 1], record, end - start - 1);
++		if (ret)
++			return ret;
++		len = record[0];
++		low = (record[1] << 8) | record[2];
++		type = record[3];
++		switch (type) {
++		case 0x00:
++			address = upper | low;
++			if (!len || address < FLASH_START_ADDRESS ||
++			    address >= FLASH_START_ADDRESS + CAM31_MCU_FLASH_SIZE ||
++			    len > FLASH_START_ADDRESS + CAM31_MCU_FLASH_SIZE - address)
++				return -EINVAL;
++			if (address == FLASH_START_ADDRESS && len >= 8)
++				vectors = true;
++			if (program) {
++				ret = mcu_bootloader_write_page(client, address, &record[4], len);
++				if (ret)
++					return ret;
++				ret = mcu_bootloader_read_page(client, address, verify, len);
++				if (ret)
++					return ret;
++				if (memcmp(verify, &record[4], len))
++					return -EILSEQ;
++			}
++			break;
++		case 0x01:
++			if (len || low)
++				return -EINVAL;
++			eof = true;
++			break;
++		case 0x04:
++			if (len != 2 || low)
++				return -EINVAL;
++			upper = ((u32)record[4] << 24) | ((u32)record[5] << 16);
++			break;
++		case 0x05:
++			if (len != 4 || low)
++				return -EINVAL;
++			break;
++		default:
++			return -EINVAL;
++		}
++		start = end;
 +	}
++	return eof && vectors ? 0 : -EINVAL;
++}
 +
++static int mcu_flash_intel_hex(struct i2c_client *client, const u8 *data, size_t size)
++{
++	int ret;
++
++	/* Validate every record and address before the first destructive command. */
++	ret = mcu_walk_hex(client, data, size, false);
++	if (ret)
++		return ret;
++	ret = mcu_bootloader_erase(client);
++	if (ret)
++		return ret;
++	ret = mcu_walk_hex(client, data, size, true);
++	if (ret)
++		return ret;
 +	return mcu_bootloader_go(client, FLASH_START_ADDRESS);
 +}
 +
@@ -477,168 +573,222 @@ index 000000000000..04ebbe5cc706
 + * MCU Packet Protocol Transport Layer
 + * -----------------------------------------------------------------------------
 + */
-+static int cam31_get_cmd_status(struct i2c_client *client, enum cam31_mcu_cmd_id cmd_id)
++static int cam31_get_cmd_status(struct i2c_client *client, u8 cmd_id)
 +{
-+	u8 cmd_1[5] = { MCU_CMD_SIGNATURE, CMD_ID_GET_STATUS, 0x00, 0x01, 0x01 };
-+	u8 cmd_2[3] = { MCU_CMD_SIGNATURE, CMD_ID_GET_STATUS, cmd_id };
-+	u_char cmd_buf[7];
-+	int retry;
++	u8 header[] = { MCU_CMD_SIGNATURE, CMD_ID_GET_STATUS, 0, 1, 1 };
++	u8 command[] = { MCU_CMD_SIGNATURE, CMD_ID_GET_STATUS, cmd_id };
++	u8 response[7];
++	u16 status;
++	int ret, retry;
++	bool flash_command = cmd_id == CMD_ID_INIT_CAM_ISP ||
++			     cmd_id == CMD_ID_INIT_CAM_ISP_ERASE;
 +
-+	for (retry = 5; --retry >= 0;) {
-+		if (cam31_write_tx(client, cmd_1, sizeof(cmd_1)) == 0
-+		    && cam31_write_tx(client, cmd_2, sizeof(cmd_2)) == 0
-+		    && cam31_read_rx(client, cmd_buf, sizeof(cmd_buf)) == 0) {
-+			u8 orig_crc = cmd_buf[5];
-+			u8 calc_crc = cam31_checksum(&cmd_buf[2], 3);
-+			if (orig_crc == calc_crc) {
-+				u32 cmd_status = (cmd_buf[3] << 8) | cmd_buf[4];
-+				enum cam31_mcu_errcode errcode = cmd_buf[6];
-+				if (cmd_status == MCU_CMD_STATUS_SUCCESS && errcode == ERRCODE_SUCCESS)
-+					return 0;
-+				else if (errcode == ERRCODE_AGAIN)
-+					return -EAGAIN;
-+				else if (errcode != ERRCODE_BUSY && cmd_status != MCU_CMD_STATUS_PENDING) {
-+					if (errcode == ERRCODE_SUCCESS || errcode == ERRCODE_ALREADY)
-+						return cmd_status;
-+					else {
-+						dev_warn(&client->dev, "cam31_status 0x%x: errcode:%d cmd_status = 0x%x\n",
-+							 cmd_id, errcode, cmd_status);
-+						return -EINVAL;
-+					}
-+				}
-+			} else {
-+				dev_warn(&client->dev, "cam31_status %x: crc:%x/%x\n",
-+					 cmd_id, orig_crc, calc_crc);
-+			}
++	/* Poll status only. Never resend an uncertain sequential flash write. */
++	for (retry = 0; retry < 50; retry++) {
++		ret = cam31_write_tx(client, header, sizeof(header));
++		if (ret)
++			return ret;
++		ret = cam31_write_tx(client, command, sizeof(command));
++		if (ret)
++			return ret;
++		ret = cam31_read_rx(client, response, sizeof(response));
++		if (ret)
++			return ret;
++		if (response[0] != MCU_CMD_SIGNATURE ||
++		    response[1] != CMD_ID_GET_STATUS || response[2] != cmd_id ||
++		    cam31_checksum(&response[2], 3) != response[5])
++			return -EBADMSG;
++
++		status = (response[3] << 8) | response[4];
++		if (status == MCU_CMD_STATUS_PENDING || response[6] == ERRCODE_BUSY) {
++			msleep(100);
++			continue;
 +		}
-+		msleep(50);
++		if (response[6] == ERRCODE_AGAIN)
++			return -EAGAIN;
++		if (response[6] != ERRCODE_SUCCESS &&
++		    (response[6] != ERRCODE_ALREADY || flash_command))
++			return -EIO;
++		if (status == MCU_CMD_STATUS_SUCCESS)
++			return 0;
++		/* The ISP is uninitialized while writing bootdata or setting ACK mode. */
++		if (status == MCU_CMD_STATUS_ISP_UNINIT ||
++		    status == MCU_CMD_STATUS_ISP_PWDN) {
++			if (flash_command || cmd_id == CMD_ID_SET_ACK_RESPONSE_MODE)
++				return 0;
++			return -ENODATA;
++		}
++		return -EIO;
 +	}
-+	dev_err(&client->dev, "get_cmd_status %d: timed out\n", cmd_id);
 +	return -ETIMEDOUT;
++}
++
++static int cam31_send_cmd(struct i2c_client *client, u8 cmd_id,
++			  const u8 *payload, u16 len)
++{
++	u8 packet[MCU_MAX_PAYLOAD + 3];
++	int ret;
++
++	if (len > MCU_MAX_PAYLOAD || (len && !payload))
++		return -EINVAL;
++	packet[0] = MCU_CMD_SIGNATURE;
++	packet[1] = cmd_id;
++	packet[2] = len >> 8;
++	packet[3] = len & 0xff;
++	packet[4] = packet[2] ^ packet[3];
++	ret = cam31_write_tx(client, packet, 5);
++	if (ret)
++		return ret;
++	usleep_range(10000, 12000);
++	if (len) {
++		memcpy(&packet[2], payload, len);
++		packet[len + 2] = cam31_checksum(payload, len);
++	}
++	return cam31_write_tx(client, packet, len ? len + 3 : 2);
 +}
 +
 +static int cam31_mcu_cmd(struct i2c_client *client, u8 cmd_id,
 +			 const u8 *tx_msg, u16 tx_len,
 +			 u8 *rx_msg, u16 rx_len)
 +{
-+	u8 hdr[3 + MCU_MAX_PAYLOAD];
-+	int retry;
-+	int ret;
++	u8 packet[MCU_MAX_PAYLOAD + 4];
 +	u16 len;
++	int ret = -EIO, retry;
 +
-+	if (tx_len > MCU_MAX_PAYLOAD)
++	/* Flash erase/write have their own framing, timing and no-resend policy. */
++	if (cmd_id == CMD_ID_INIT_CAM_ISP || cmd_id == CMD_ID_INIT_CAM_ISP_ERASE ||
++	    rx_len > MCU_MAX_PAYLOAD || (rx_len && !rx_msg))
 +		return -EINVAL;
 +
-+	for (retry = 5; --retry >= 0; msleep(100) ) {
-+		hdr[0] = MCU_CMD_SIGNATURE;
-+		hdr[1] = cmd_id;
-+		hdr[2] = (tx_len >> 8) & 0xFF;
-+		hdr[3] = tx_len & 0xFF;
-+		hdr[4] = cam31_checksum(&hdr[2], 2);
-+
-+		ret = cam31_write_tx(client, hdr, 5);
++	for (retry = 0; retry < (rx_len ? 5 : 1); retry++) {
++		if (retry)
++			msleep(100);
++		ret = cam31_send_cmd(client, cmd_id, tx_msg, tx_len);
 +		if (ret)
 +			continue;
-+		if (tx_len == 0)
-+			ret = cam31_write_tx(client, hdr, 2);
-+		else {
-+			memcpy(&hdr[2], tx_msg, tx_len);
-+			hdr[tx_len + 2] = cam31_checksum(&hdr[2], tx_len);
-+			ret = cam31_write_tx(client, hdr, tx_len + 3);
-+		}
-+		if (ret)
-+			continue;
-+		if (cmd_id == CMD_ID_INIT_CAM_ISP_ERASE) {
-+			msleep(18000);
-+			goto done;
-+		}
-+		if (cmd_id == CMD_ID_INIT_FLASH_WP
-+		    || cmd_id == CMD_ID_INIT_FLASH_WP_DISABLE) {
++		if (cmd_id == CMD_ID_INIT_FLASH_WP ||
++		    cmd_id == CMD_ID_INIT_FLASH_WP_DISABLE) {
++			/* These vendor commands do not have a GET_STATUS response. */
 +			msleep(200);
-+			goto done;
++			return 0;
 +		}
-+		if (cmd_id == CMD_ID_INIT_CAM_ISP) {
-+			msleep(10);
-+			return ret;
++		if (cmd_id == CMD_ID_SET_ACK_RESPONSE_MODE)
++			msleep(100);
++		if (!rx_len)
++			return cam31_get_cmd_status(client, cmd_id);
++
++		usleep_range(10000, 12000);
++		ret = cam31_read_rx(client, packet, 6);
++		if (ret)
++			continue;
++		if (packet[0] != MCU_CMD_SIGNATURE || packet[1] != cmd_id ||
++		    (packet[2] ^ packet[3]) != packet[4]) {
++			ret = -EBADMSG;
++			continue;
 +		}
-+		if (rx_len == 0) {
-+			ret = cam31_get_cmd_status(client, cmd_id);
-+			goto done;
-+		}
-+		else {
-+			ret = cam31_read_rx(client, hdr, 8);
-+			if (ret < 0)
-+				continue;
-+			u8 orig_crc = hdr[4];
-+			u8 err_code = hdr[5];
-+			u8 calc_crc = cam31_checksum(&hdr[2], 2);
-+			if (orig_crc != calc_crc) {
-+				dev_warn(&client->dev, "cam31_mcu_cmd 0x%02x: crc=%x/%x\n",
-+					cmd_id, orig_crc, calc_crc);
-+				continue;
-+			}
-+			if (err_code != ERRCODE_SUCCESS) {
-+				ret = err_code;
-+				goto done;
-+			}
-+			len = (hdr[2] << 8) | hdr[3];
-+			if (len > rx_len)
-+				len = rx_len;
-+			ret = cam31_read_rx(client, hdr, len + 4);
-+			if (ret == 0) {
-+				memcpy(rx_msg, &hdr[2], len);
-+				goto done;
-+			}
-+		}
++		if (packet[5] != ERRCODE_SUCCESS)
++			return packet[5] == ERRCODE_AGAIN ? -EAGAIN : -EIO;
++		len = (packet[2] << 8) | packet[3];
++		if (len > MCU_MAX_PAYLOAD)
++			return -EMSGSIZE;
++		ret = cam31_read_rx(client, packet, len + 4);
++		if (ret)
++			continue;
++		if (packet[0] != MCU_CMD_SIGNATURE || packet[1] != cmd_id ||
++		    cam31_checksum(&packet[2], len) != packet[len + 2])
++			return -EBADMSG;
++		if (packet[len + 3] != ERRCODE_SUCCESS)
++			return packet[len + 3] == ERRCODE_AGAIN ? -EAGAIN : -EIO;
++		if (len > rx_len)
++			return -EMSGSIZE;
++		/* Critical firmware decisions require complete, fixed-size replies. */
++		if ((cmd_id == CMD_ID_GET_FW_KEY || cmd_id == CMD_ID_VERSION ||
++		     cmd_id == CMD_ID_VERSION_ISP ||
++		     (cmd_id >= CMD_ID_FL_STATUS && cmd_id <= CMD_ID_NV_STATUS)) &&
++		    len != rx_len)
++			return -EMSGSIZE;
++		if (!len)
++			return -ENODATA;
++		memset(rx_msg, 0, rx_len);
++		memcpy(rx_msg, &packet[2], len);
++		return 0;
 +	}
-+ done:
-+	if (ret < 0)
-+		dev_err(&client->dev, "cam31_mcu_cmd 0x%02x failed: %d\n", cmd_id, ret);
-+#ifdef DEBUG
-+	else
-+		dev_info(&client->dev, "mcu_cmd %02x tx:%*ph rx:%*ph\n",
-+			 cmd_id, tx_len, tx_msg, rx_len, rx_msg);
-+#endif
 +	return ret;
 +}
 +
-+static int isp_flash_bootdata(struct i2c_client *client, const u8 *bin_data, size_t size)
++static int cam31_isp_erase(struct i2c_client *client)
 +{
-+	u8 tx_buf[260];
-+	u32 total_chunks = size / ISX_BUFFER_SIZE;
-+	u32 chunk;
++	/* A1 advertises zero payload bytes, but sends one sector byte, no CRC. */
++	u8 header[] = { MCU_CMD_SIGNATURE, CMD_ID_INIT_CAM_ISP_ERASE, 0, 0, 0 };
++	u8 command[] = { MCU_CMD_SIGNATURE, CMD_ID_INIT_CAM_ISP_ERASE, 0 };
 +	int ret;
 +
-+	ret = cam31_mcu_cmd(client, CMD_ID_INIT_FLASH_WP_DISABLE, NULL, 0, NULL, 0);
-+	if (ret < 0)
-+		return ret;
-+	msleep(200);
-+
-+	tx_buf[0] = 0;
-+	dev_info(&client->dev, "Erasing ISP firmware...");
-+	ret = cam31_mcu_cmd(client, CMD_ID_INIT_CAM_ISP_ERASE, tx_buf, 1, NULL, 0);
-+	if (ret < 0)
-+		return ret;
-+
-+	for (chunk = 0; chunk < total_chunks; chunk++) {
-+		if (chunk % 32 == 0) {
-+			dev_info(&client->dev, "   loading ISP at %d%%\n", chunk * 100 / total_chunks);
-+		}
-+		ret = cam31_mcu_cmd(client, CMD_ID_INIT_CAM_ISP,
-+				    &bin_data[chunk * ISX_BUFFER_SIZE], ISX_BUFFER_SIZE,
-+				    NULL, 0);
-+		if (ret)
-+			return ret;
-+		msleep(50);
-+	}
-+
-+	ret = cam31_mcu_cmd(client, CMD_ID_INIT_FLASH_WP, NULL, 0, NULL, 0);
++	ret = cam31_write_tx(client, header, sizeof(header));
 +	if (ret)
 +		return ret;
++	usleep_range(2000, 3000);
++	ret = cam31_write_tx(client, command, sizeof(command));
++	if (ret)
++		return ret;
++	msleep(18000);
++	return cam31_get_cmd_status(client, CMD_ID_INIT_CAM_ISP_ERASE);
++}
 +
-+	msleep(100);
++static int isp_flash_bootdata(struct i2c_client *client, const u8 *bin_data,
++			      size_t size)
++{
++	u8 key[16];
++	u8 chunk[ISX_BUFFER_SIZE];
++	size_t offset, i;
++	int ret, protect_ret;
 +
-+	return 0;
++	/* Reject partial images before changing flash protection or erasing. */
++	if (size != CAM31_ISP_FLASH_SIZE)
++		return -EINVAL;
++	ret = cam31_mcu_cmd(client, CMD_ID_GET_FW_KEY, NULL, 0, key, sizeof(key));
++	if (ret)
++		goto clear_key;
++
++	ret = cam31_mcu_cmd(client, CMD_ID_INIT_FLASH_WP_DISABLE, NULL, 0, NULL, 0);
++	if (ret)
++		goto protect;
++	msleep(200);
++	dev_info(&client->dev, "Erasing CAM31 ISP bootdata\n");
++	ret = cam31_isp_erase(client);
++	if (ret)
++		goto protect;
++
++	for (offset = 0; offset < size; offset += sizeof(chunk)) {
++		for (i = 0; i < sizeof(chunk); i++)
++			chunk[i] = bin_data[offset + i] ^ key[(offset + i) % sizeof(key)];
++		/* No resend: the MCU advances its implicit flash address per block. */
++		ret = cam31_send_cmd(client, CMD_ID_INIT_CAM_ISP, chunk, sizeof(chunk));
++		if (ret)
++			goto protect;
++		msleep(100);
++		ret = cam31_get_cmd_status(client, CMD_ID_INIT_CAM_ISP);
++		if (ret)
++			goto protect;
++		if ((offset + sizeof(chunk)) % (64 * sizeof(chunk)) == 0)
++			dev_info(&client->dev, "CAM31 ISP firmware: %zu%%\n",
++				 (offset + sizeof(chunk)) * 100 / size);
++	}
++
++protect:
++	/* Also attempt protection after a failed or uncertain unprotect/write. */
++	protect_ret = cam31_mcu_cmd(client, CMD_ID_INIT_FLASH_WP, NULL, 0, NULL, 0);
++	if (protect_ret) {
++		dev_err(&client->dev, "Cannot restore ISP flash protection: %d\n",
++			protect_ret);
++		if (!ret)
++			ret = protect_ret;
++	}
++	if (ret)
++		dev_err(&client->dev, "ISP firmware recovery incomplete: %d\n", ret);
++clear_key:
++	memzero_explicit(key, sizeof(key));
++	memzero_explicit(chunk, sizeof(chunk));
++	return ret;
 +}
 +
 +/* -----------------------------------------------------------------------------
@@ -646,10 +796,10 @@ index 000000000000..04ebbe5cc706
 + * -----------------------------------------------------------------------------
 + */
 +struct cam31_mcu_set_ctrl_payload {
++	__be16 index;
 +	__be32 ctrl_id;
 +	u8     ctrl_type;
 +	__be32 val;
-+	__be16 reserved;
 +} __packed;
 +
 +struct cam31_mcu_get_ctrl_payload {
@@ -696,26 +846,34 @@ index 000000000000..04ebbe5cc706
 +	return 0;
 +}
 +
++
 +static int cam31_s_ctrl(struct v4l2_ctrl *ctrl)
 +{
 +	struct cam31_dev *cam = container_of(ctrl->handler, struct cam31_dev, ctrls);
 +	struct cam31_ctrl *map;
 +	struct cam31_mcu_set_ctrl_payload payload;
++        int ret;
 +
 +	if (!cam->initialized)
 +		return -EAGAIN;
 +
 +	map = cam31_find_ctrl(cam, ctrl->id);
-+	if (!map)
-+		return -EINVAL;
++	if (!map) {
++		dev_warn(&cam->client->dev, "Invalid ctrl: %x\n", ctrl->id);
++                return 0;
++        }
 +
 +	memset(&payload, 0, sizeof(payload));
++	payload.index     = cpu_to_be16(map->index);
 +	payload.ctrl_id   = cpu_to_be32(map->v4l2_cid);
 +	payload.ctrl_type = map->ctrl_type;
 +	payload.val       = cpu_to_be32(ctrl->val);
 +
-+	return cam31_mcu_cmd(cam->client, CMD_ID_SET_CTRL,
-+			     (u8 *)&payload, sizeof(payload), NULL, 0);
++	ret = cam31_mcu_cmd(cam->client, CMD_ID_SET_CTRL,
++                            (u8 *)&payload, sizeof(payload), NULL, 0);
++        dev_info(&cam->client->dev, "s_ctrl %x %d min=%d max=%d def=%d: %d\n",
++                 ctrl->id, ctrl->val, map->min, map->max, map->def, ret);
++        return 0;
 +}
 +
 +static const struct v4l2_ctrl_ops cam31_ctrl_ops = {
@@ -748,54 +906,53 @@ index 000000000000..04ebbe5cc706
 +	u16 index = 0;
 +	int ret;
 +
-+	v4l2_ctrl_handler_init(hdl, MCU_MAX_CONTROLS);
++        if (list_empty(&hdl->ctrls)) {
++		while (index < MCU_MAX_CONTROLS) {
++			tx_payload[0] = (index >> 8) & 0xFF;
++			tx_payload[1] = index & 0xFF;
 +
-+	while (index < MCU_MAX_CONTROLS) {
-+		tx_payload[0] = (index >> 8) & 0xFF;
-+		tx_payload[1] = index & 0xFF;
++			ret = cam31_mcu_cmd(cam->client, CMD_ID_GET_CTRL_INFO,
++					    tx_payload, 2, rx_buf, sizeof(rx_buf));
++			if (ret)
++				break;
 +
-+		ret = cam31_mcu_cmd(cam->client, CMD_ID_GET_CTRL_INFO,
-+				    tx_payload, 2, rx_buf, sizeof(rx_buf));
-+		if (ret)
-+			break;
++			u32 cid = (rx_buf[0] << 24) | (rx_buf[1] << 16) | (rx_buf[2] << 8) | rx_buf[3];
 +
-+		u32 cid = (rx_buf[0] << 24) | (rx_buf[1] << 16) | (rx_buf[2] << 8) | rx_buf[3];
++			if (!cam31_is_valid_isx031_ctrl(cid)) {
++				index++;
++				continue;
++			}
 +
-+		if (!cam31_is_valid_isx031_ctrl(cid)) {
++			struct cam31_ctrl *map = &cam->ctrldb[cam->num_mcu_ctrls];
++			map->v4l2_cid  = cid;
++			map->ctrl_type = rx_buf[4];
++			map->index     = index;
++			map->min       = (s32)be32_to_cpup((__be32 *)&rx_buf[5]);
++			map->max       = (s32)be32_to_cpup((__be32 *)&rx_buf[9]);
++			map->def       = (s32)be32_to_cpup((__be32 *)&rx_buf[13]);
++			map->step      = (s32)be32_to_cpup((__be32 *)&rx_buf[17]);
++
++			if (map->v4l2_cid == V4L2_CID_EXPOSURE_AUTO) {
++				map->ctrl = v4l2_ctrl_new_std_menu(hdl, &cam31_ctrl_ops,
++								   map->v4l2_cid, map->max,
++								   0, map->def);
++			} else {
++				map->ctrl = v4l2_ctrl_new_std(hdl, &cam31_ctrl_ops,
++							      map->v4l2_cid, map->min, map->max,
++							      map->step, map->def);
++			}
++
++			if (map->ctrl)
++				cam->num_mcu_ctrls++;
 +			index++;
-+			continue;
 +		}
 +
-+		struct cam31_ctrl *map = &cam->ctrldb[cam->num_mcu_ctrls];
-+		map->v4l2_cid  = cid;
-+		map->ctrl_type = rx_buf[4];
-+		map->min       = (s32)be32_to_cpup((__be32 *)&rx_buf[5]);
-+		map->max       = (s32)be32_to_cpup((__be32 *)&rx_buf[9]);
-+		map->def       = (s32)be32_to_cpup((__be32 *)&rx_buf[13]);
-+		map->step      = (s32)be32_to_cpup((__be32 *)&rx_buf[17]);
-+
-+		if (map->v4l2_cid == V4L2_CID_EXPOSURE_AUTO) {
-+			map->ctrl = v4l2_ctrl_new_std_menu(hdl, &cam31_ctrl_ops,
-+							   map->v4l2_cid, map->max,
-+							   0, map->def);
-+		} else {
-+			map->ctrl = v4l2_ctrl_new_std(hdl, &cam31_ctrl_ops,
-+						      map->v4l2_cid, map->min, map->max,
-+						      map->step, map->def);
++		if (hdl->error) {
++			v4l2_ctrl_handler_free(hdl);
++			return hdl->error;
 +		}
-+
-+		if (map->ctrl)
-+			cam->num_mcu_ctrls++;
-+		index++;
 +	}
-+
-+	if (hdl->error) {
-+		v4l2_ctrl_handler_free(hdl);
-+		return hdl->error;
-+	}
-+
-+	cam->sd.ctrl_handler = hdl;
-+	return 0;
++	return v4l2_ctrl_handler_setup(&cam->ctrls);
 +}
 +
 +static __maybe_unused int cam31_isp_read_reg(struct i2c_client *client, u16 reg_addr)
@@ -1164,42 +1321,135 @@ index 000000000000..04ebbe5cc706
 +	return 0;
 +}
 +
-+static int mcu_boot_mode(struct i2c_client *client)
++static int mcu_bootloader_check(struct i2c_client *client)
 +{
-+	int retry;
-+	u8 buf[2] = { BL_GET_VERSION, ~BL_GET_VERSION };
-+	u8 ack;
-+	
-+	for (retry = 10; --retry >= 0; ) {
-+		if (cam31_write_tx(client, buf, sizeof(buf)) == 0
-+		    && cam31_read_rx(client, &ack, 1) == 0
-+		    && ack == 'y'
-+		    && cam31_read_rx(client, &ack, 1) == 0
-+		    && cam31_read_rx(client, &ack, 1) == 0) {
-+			return 0;
-+		}
-+		if (ser_gpio_level(client, SER_REG_BOOT, false) == 0
-+		    && ser_gpio_level(client, SER_REG_BOOT, true) == 0) {
-+			msleep(1);
-+			if (mcu_pulse_reset(client) == 0)
-+				return 0;
-+		}
-+		msleep(100);
++	u8 command[] = { BL_GET_VERSION, (u8)~BL_GET_VERSION };
++	u8 response;
++	int ret;
++
++	/* Confirm the ROM bootloader before automatic MCU recovery. */
++	ret = cam31_write_tx(client, command, sizeof(command));
++	if (ret)
++		return ret;
++	ret = cam31_read_rx(client, &response, 1);
++	if (ret || response != RESP_ACK)
++		return ret ? ret : -ENODEV;
++	ret = cam31_read_rx(client, &response, 1);
++	if (ret)
++		return ret;
++	ret = cam31_read_rx(client, &response, 1);
++	if (ret || response != RESP_ACK)
++		return ret ? ret : -ENODEV;
++	return 0;
++}
++
++static int cam31_start_isp(struct i2c_client *client)
++{
++	int ret;
++
++	ret = cam31_mcu_cmd(client, CMD_ID_INIT_CAM, NULL, 0, NULL, 0);
++	if (ret && ret != -ENODATA)
++		return ret;
++	ret = cam31_mcu_cmd(client, CMD_ID_SET_ACK_RESPONSE_MODE, NULL, 0, NULL, 0);
++	if (ret)
++		return ret;
++	msleep(50);
++	return 0;
++}
++
++static int cam31_read_boot_status(struct i2c_client *client, u8 status[3])
++{
++	int i, ret;
++
++	for (i = 0; i < 3; i++) {
++		ret = cam31_mcu_cmd(client, CMD_ID_FL_STATUS + i, NULL, 0,
++				    &status[i], 1);
++		if (ret)
++			return ret;
++		if (status[i] > 1)
++			return -EBADMSG;
 +	}
-+	return -EIO;
++	return 0;
++}
++
++static int cam31_check_isp(struct i2c_client *client)
++{
++	u8 status[3];
++	int ret, retry, invalid = 0;
++
++	/* A2 detects the flash device; A3/A4 validate the ISP bootdata. */
++	for (retry = 0; retry < 5; retry++) {
++		ret = cam31_read_boot_status(client, status);
++		if (ret == -EAGAIN) {
++			invalid = 0;
++			ret = cam31_mcu_cmd(client, CMD_ID_SET_ACK_RESPONSE_MODE,
++					    NULL, 0, NULL, 0);
++			if (ret)
++				return ret;
++		} else {
++			if (ret)
++				return ret;
++			if (!status[0])
++				return -ENODEV;
++			if (status[1] && status[2])
++				return 0;
++			invalid++;
++		}
++		msleep(200);
++	}
++	/* Require consecutive valid replies after allowing startup to settle. */
++	return invalid >= 2 ? -ENODATA : -EAGAIN;
 +}
 +
 +static int cam31_power_on(struct cam31_dev *cam)
 +{
++	struct i2c_client *client = cam->client;
++	const struct firmware *fw;
++	const char *fw_name = "cam31_isp_fw.bin";
++	u8 version[32];
 +	int ret;
 +
-+	ret = cam31_mcu_cmd(cam->client, CMD_ID_INIT_FLASH_WP_DISABLE, NULL, 0, NULL, 0);
-+	if (ret < 0)
-+		return ret;
-+
-+	ret = cam31_mcu_cmd(cam->client, CMD_ID_INIT_CAM, NULL, 0, NULL, 0);
++	ret = cam31_start_isp(client);
 +	if (ret)
 +		return ret;
++	ret = cam31_check_isp(client);
++	if (ret == -ENODATA) {
++		of_property_read_string(client->dev.of_node, "isp_fw_name", &fw_name);
++		ret = request_firmware(&fw, fw_name, &client->dev);
++		if (ret)
++			return ret;
++		dev_info(&client->dev, "Invalid ISP bootdata; recovering from %s\n", fw_name);
++		ret = isp_flash_bootdata(client, fw->data, fw->size);
++		release_firmware(fw);
++		if (ret)
++			return ret;
++
++		/* Restart and verify boot without retrying the erase/write cycle. */
++		ret = mcu_pulse_reset(client);
++		if (ret)
++			return ret;
++		msleep(50);
++		mcu_bootloader_go(client, FLASH_START_ADDRESS);
++		msleep(1000);
++		ret = cam31_start_isp(client);
++		if (ret)
++			return ret;
++		ret = cam31_check_isp(client);
++		if (ret)
++			return ret;
++		dev_info(&client->dev, "CAM31 ISP firmware recovered; boot verified\n");
++	} else {
++		if (ret)
++			return ret;
++		dev_info(&client->dev, "CAM31 ISP bootdata valid; skipping firmware write\n");
++	}
++
++	/* A version-query failure must never trigger erasure of healthy bootdata. */
++	ret = cam31_mcu_cmd(client, CMD_ID_VERSION_ISP, NULL, 0, version, sizeof(version));
++	if (ret)
++		dev_warn(&client->dev, "CAM31 ISP version unavailable: %d\n", ret);
++	else
++		dev_info(&client->dev, "CAM31 ISP version %.32s\n", version);
 +	return 0;
 +}
 +
@@ -1265,82 +1515,51 @@ index 000000000000..04ebbe5cc706
 +	return 0;
 +}
 +
-+static int cam31_load_firmware(struct cam31_dev *cam)
++static int cam31_load_mcu_firmware(struct cam31_dev *cam)
 +{
 +	struct i2c_client *client = cam->client;
-+	bool load_mcu_fw = true;
-+	bool load_isp_fw = true;
-+	u8 rx_buf[32];
++	const struct firmware *fw;
++	const char *fw_name = "cam31_mcu_fw.bin";
++	u8 version[32];
 +	int ret;
 +
-+	ret = cam31_mcu_cmd(cam->client, CMD_ID_VERSION, NULL, 0, rx_buf, sizeof(rx_buf));
-+	if (ret && load_mcu_fw) {
-+		const char *mcu_fw_name = "cam31_mcu_fw.bin";
-+		const struct firmware *mcu_fw = NULL;
++	ret = cam31_mcu_cmd(client, CMD_ID_VERSION, NULL, 0, version, sizeof(version));
++	if (!ret)
++		goto ready;
++	/* Do not treat malformed application replies as missing firmware. */
++	if (ret == -EBADMSG || ret == -EMSGSIZE || ret == -EAGAIN)
++		return ret;
++	ret = mcu_bootloader_check(client);
++	if (ret)
++		return ret;
 +
-+		of_property_read_string(client->dev.of_node, "mcu_fw_name", &mcu_fw_name);
-+		ret = request_firmware(&mcu_fw, mcu_fw_name, &client->dev);
-+		if (ret) {
-+			dev_err(&client->dev, "Failed to load MCU firmware %s: %d\n", mcu_fw_name, ret);
-+			return ret;
-+		}
-+
-+		ret = mcu_boot_mode(cam->client);
-+		if (ret) {
-+			dev_err(&client->dev, "Cannot enter boot mode\n");
-+			return ret;
-+		}
-+		ret = ser_gpio_level(cam->client, SER_REG_BOOT, false);
-+		if (ret) {
-+			dev_err(&client->dev, "Cannot assert BOOT: %d\n", ret);
-+			return ret;
-+		}
-+		msleep(100);
-+
-+		ret = mcu_flash_intel_hex(client, mcu_fw->data, mcu_fw->size);
-+		release_firmware(mcu_fw);
-+		if (ret) {
-+			dev_err(&client->dev, "MCU Firmware Flash failed: %d\n", ret);
-+			return ret;
-+		}
++	/* A valid application can remain in the ROM after a previous reset. */
++	ret = mcu_bootloader_go(client, FLASH_START_ADDRESS);
++	if (!ret) {
 +		msleep(1000);
-+		ret = cam31_mcu_cmd(cam->client, CMD_ID_VERSION, NULL, 0, rx_buf, sizeof(rx_buf));
-+		if (ret)
-+			return ret;
++		ret = cam31_mcu_cmd(client, CMD_ID_VERSION, NULL, 0, version, sizeof(version));
++		if (!ret)
++			goto ready;
 +	}
-+	dev_info(&client->dev, "Firmware Version %.32s\n", rx_buf);
-+
-+	/* Check if ISP SPI Flash is unprogrammed */
-+	ret = cam31_mcu_cmd(cam->client, CMD_ID_FL_STATUS, NULL, 0, rx_buf, sizeof(rx_buf));
-+	if (ret < 0)
-+		dev_err(&client->dev, "Cannot read SPI flash status\n");
-+	else if (rx_buf[0] == 0x01) {
-+		ret = cam31_mcu_cmd(cam->client, CMD_ID_VERSION_ISP, NULL, 0, rx_buf, sizeof(rx_buf));
-+		if (ret)
-+			dev_warn(&client->dev, "CAM31 ISP version unknown\n");
-+		else
-+			dev_info(&client->dev, "CAM31 ISP version %.32s\n", rx_buf);
-+	}
-+	else if (load_isp_fw) {
-+		const struct firmware *isp_fw = NULL;
-+		const char *isp_fw_name = "cam31_isp_fw.bin";
-+
-+		of_property_read_string(client->dev.of_node, "isp_fw_name", &isp_fw_name);
-+		ret = request_firmware(&isp_fw, isp_fw_name, &client->dev);
-+		if (ret) {
-+			dev_err(&client->dev, "Failed to load ISP firmware %s: %d\n", isp_fw_name, ret);
-+			return ret;
-+		}
-+
-+		ret = isp_flash_bootdata(client, isp_fw->data, isp_fw->size);
-+		release_firmware(isp_fw);
-+		if (ret) {
-+			dev_err(&client->dev, "ISP Firmware Flash failed: %d\n", ret);
-+			return ret;
-+		}
-+		dev_info(&client->dev, "CAM31 firmware load successful\n");
-+	}
-+	return ret;
++	ret = mcu_bootloader_check(client);
++	if (ret)
++		return ret;
++	of_property_read_string(client->dev.of_node, "mcu_fw_name", &fw_name);
++	ret = request_firmware(&fw, fw_name, &client->dev);
++	if (ret)
++		return ret;
++	dev_info(&client->dev, "Recovering CAM31 MCU application from %s\n", fw_name);
++	ret = mcu_flash_intel_hex(client, fw->data, fw->size);
++	release_firmware(fw);
++	if (ret)
++		return ret;
++	msleep(1000);
++	ret = cam31_mcu_cmd(client, CMD_ID_VERSION, NULL, 0, version, sizeof(version));
++	if (ret)
++		return ret;
++ready:
++	dev_info(&client->dev, "CAM31 MCU firmware version %.32s\n", version);
++	return 0;
 +}
 +
 +/* -----------------------------------------------------------------------------
@@ -1358,19 +1577,22 @@ index 000000000000..04ebbe5cc706
 +	if (cam->initialized)
 +		return;
 +
-+        /*
-+         * Sleep for 1 second to allow additional links that share the same deserializer.
-+         */
-+        msleep(1000);
++	/* Allow the other links on this deserializer to initialize. */
++	msleep(1000);
 +#ifdef CAM31_INIT_GPIOS
-+	cam31_init_gpios(client);
-+	mcu_pulse_reset(client);
-+	msleep(50);
++	ret = cam31_init_gpios(client);
++	if (ret)
++		goto init_failed;
++	ret = mcu_pulse_reset(client);
++	if (ret)
++		goto init_failed;
 +#endif
++	msleep(50);
++	/* Start the existing application if reset left the MCU in the ROM. */
 +	mcu_bootloader_go(client, FLASH_START_ADDRESS);
 +	msleep(200);
 +
-+	ret = cam31_load_firmware(cam);
++	ret = cam31_load_mcu_firmware(cam);
 +	if (ret) {
 +		dev_err(dev, "Failed to load firmware: %d\n", ret);
 +		return;
@@ -1388,14 +1610,18 @@ index 000000000000..04ebbe5cc706
 +		return;
 +	}
 +
++	cam->initialized = true;
 +	ret = cam31_init_controls(cam);
 +	if (ret) {
 +		dev_err(dev, "Failed to initialize controls: %d\n", ret);
 +		return;
 +	}
 +
-+	cam->initialized = true;
 +	dev_info(dev, "CAM31 (Sony ISX031 via MCU) deferred init complete\n");
++	return;
++
++init_failed:
++	dev_err(dev, "Cannot reset CAM31 MCU: %d\n", ret);
 +}
 +
 +/* -----------------------------------------------------------------------------
@@ -1442,6 +1668,8 @@ index 000000000000..04ebbe5cc706
 +	if (ret)
 +		goto err_entity_cleanup;
 +
++        v4l2_ctrl_handler_init(&cam->ctrls, MCU_MAX_CONTROLS);
++        cam->sd.ctrl_handler = &cam->ctrls;
 +        ret = v4l2_async_register_subdev(&cam->sd);
 +	if (ret) {
 +		dev_err(dev, "v4l2_async_register_subdev failed: %d\n", ret);
@@ -1500,10 +1728,10 @@ index 000000000000..04ebbe5cc706
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
 new file mode 100644
-index 000000000000..765c88c9d765
+index 000000000000..b6a529e491a9
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam57.c
-@@ -0,0 +1,2607 @@
+@@ -0,0 +1,2608 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM57 containing oax4000 ISP connected to OmniVision ox05b1s sensor.
@@ -3816,7 +4044,8 @@ index 000000000000..765c88c9d765
 +		break;
 +	}
 +
-+	return ret;
++        dev_info(&cam->client->dev, "s_ctrl %x %d: %d\n", ctrl->id, ctrl->val, ret);
++	return 0;
 +}
 +
 +static const struct v4l2_ctrl_ops cam57_ctrl_ops = {
@@ -3861,42 +4090,40 @@ index 000000000000..765c88c9d765
 +	struct v4l2_ctrl_handler *hdl = &cam->ctrls;
 +	int i, ret;
 +
-+	v4l2_ctrl_handler_init(hdl, 12);
++        if (list_empty(&hdl->ctrls)) {
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
++				  0, 255, 1, 128);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
++				  0, 255, 1, 128);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
++				  0, 255, 1, 128);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_CONTRAST,
++				  0, 255, 1, 128);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_GAIN,
++				  0, 255, 1, 16);
 +
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
-+			  0, 255, 1, 128);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
-+			  0, 255, 1, 128);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
-+			  0, 255, 1, 128);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_CONTRAST,
-+			  0, 255, 1, 128);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_GAIN,
-+			  0, 255, 1, 16);
++		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
++				       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
++				  1, 0xFFFF, 1, 100);
 +
-+	v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
-+			       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
-+			  1, 0xFFFF, 1, 100);
++		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
++				       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
++				       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
 +
-+	v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
-+			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO, 0,
-+			       V4L2_CID_POWER_LINE_FREQUENCY_AUTO);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
++		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
 +
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
-+	v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
++		for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++)
++			v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
 +
-+	for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++)
-+		v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
-+
-+	if (hdl->error) {
-+		ret = hdl->error;
-+		v4l2_ctrl_handler_free(hdl);
-+		return ret;
++		if (hdl->error) {
++			ret = hdl->error;
++			v4l2_ctrl_handler_free(hdl);
++			return ret;
++		}
 +	}
-+
-+	cam->sd.ctrl_handler = hdl;
-+	return 0;
++	return v4l2_ctrl_handler_setup(hdl);
 +}
 +
 +static int cam57_core_reset(struct v4l2_subdev *sd, u32 val)
@@ -3981,13 +4208,13 @@ index 000000000000..765c88c9d765
 +		goto err_power_off;
 +	}
 +
++	cam->initialized = true;
++
 +	ret = cam57_init_controls(cam);
 +	if (ret) {
 +		dev_err(dev, "Failed to initialize V4L2 controls: %d\n", ret);
 +		goto err_power_off;
 +	}
-+
-+	cam->initialized = true;
 +
 +	dev_info(dev, "CAM57 ISP / STURDeCAM57 deferred init complete\n");
 +	return;
@@ -4058,6 +4285,8 @@ index 000000000000..765c88c9d765
 +	if (ret)
 +		goto err_entity_cleanup;
 +
++	v4l2_ctrl_handler_init(&cam->ctrls, 16);
++	cam->sd.ctrl_handler = &cam->ctrls;
 +        ret = v4l2_async_register_subdev(&cam->sd);
 +	if (ret) {
 +		dev_err(dev, "v4l2_async_register_subdev failed: %d\n", ret);
