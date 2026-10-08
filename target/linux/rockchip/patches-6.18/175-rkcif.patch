@@ -1,8 +1,7 @@
-diff --git a/Documentation/devicetree/bindings/media/rockchip,rk3568-mipi-csi2.yaml b/Documentation/devicetree/bindings/media/rockchip,rk3568-mipi-csi2.yaml
-new file mode 100644
-index 000000000000..2c2bd87582eb
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/rockchip,rk3568-mipi-csi2.yaml
+===================================================================
 --- /dev/null
-+++ b/Documentation/devicetree/bindings/media/rockchip,rk3568-mipi-csi2.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/rockchip,rk3568-mipi-csi2.yaml
 @@ -0,0 +1,141 @@
 +# SPDX-License-Identifier: (GPL-2.0 OR BSD-2-Clause)
 +%YAML 1.2
@@ -145,11 +144,11 @@ index 000000000000..2c2bd87582eb
 +            };
 +        };
 +    };
-diff --git a/MAINTAINERS b/MAINTAINERS
-index d27beeb0d9b8..23381c7214ad 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -24965,6 +24965,13 @@ S:	Maintained
+Index: linux-6.18.44/MAINTAINERS
+===================================================================
+--- linux-6.18.44.orig/MAINTAINERS
++++ linux-6.18.44/MAINTAINERS
+@@ -24981,6 +24981,13 @@ S:	Maintained
  F:	drivers/i2c/busses/i2c-designware-amdisp.c
  F:	include/linux/soc/amd/isp4_misc.h
  
@@ -163,164 +162,10 @@ index d27beeb0d9b8..23381c7214ad 100644
  SYNOPSYS DESIGNWARE MMC/SD/SDIO DRIVER
  M:	Jaehoon Chung <jh80.chung@samsung.com>
  L:	linux-mmc@vger.kernel.org
-diff --git a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-index 7e74e04057cf..31fdeb7e1379 100644
---- a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-+++ b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-@@ -1366,6 +1366,149 @@ av1d: video-codec@fdc70000 {
- 		resets = <&cru SRST_A_AV1>, <&cru SRST_P_AV1>, <&cru SRST_A_AV1_BIU>, <&cru SRST_P_AV1_BIU>;
- 	};
- 
-+	vicap: video-capture@fdce0000 {
-+		compatible = "rockchip,rk3588-vicap";
-+		reg = <0x0 0xfdce0000 0x0 0x800>;
-+		interrupts = <GIC_SPI 155 IRQ_TYPE_LEVEL_HIGH 0>;
-+		clocks = <&cru ACLK_VICAP>, <&cru HCLK_VICAP>,
-+			 <&cru DCLK_VICAP>, <&cru ICLK_CSIHOST0>,
-+			 <&cru ICLK_CSIHOST1>;
-+		clock-names = "aclk", "hclk", "dclk", "iclk", "iclk1";
-+		iommus = <&vicap_mmu>;
-+		power-domains = <&power RK3588_PD_VI>;
-+		resets = <&cru SRST_A_VICAP>, <&cru SRST_H_VICAP>,
-+			 <&cru SRST_D_VICAP>, <&cru SRST_CSIHOST0_VICAP>,
-+			 <&cru SRST_CSIHOST1_VICAP>,
-+			 <&cru SRST_CSIHOST2_VICAP>,
-+			 <&cru SRST_CSIHOST3_VICAP>,
-+			 <&cru SRST_CSIHOST4_VICAP>,
-+			 <&cru SRST_CSIHOST5_VICAP>;
-+		reset-names = "arst", "hrst", "drst", "irst0", "irst1",
-+			      "irst2", "irst3", "irst4", "irst5";
-+		status = "disabled";
-+
-+		ports {
-+			#address-cells = <1>;
-+			#size-cells = <0>;
-+
-+			vicap_dvp: port@0 {
-+				reg = <0>;
-+			};
-+
-+			vicap_mipi0: port@1 {
-+				reg = <1>;
-+			};
-+
-+			vicap_mipi1: port@2 {
-+				reg = <2>;
-+			};
-+
-+			vicap_mipi2: port@3 {
-+				reg = <3>;
-+
-+				vicap_mipi2_input: endpoint {
-+					remote-endpoint = <&csi2_output>;
-+				};
-+			};
-+
-+			vicap_mipi3: port@4 {
-+				reg = <4>;
-+			};
-+
-+			vicap_mipi4: port@5 {
-+				reg = <5>;
-+
-+				vicap_mipi4_input: endpoint {
-+					remote-endpoint = <&csi4_output>;
-+				};
-+			};
-+
-+			vicap_mipi5: port@6 {
-+				reg = <6>;
-+			};
-+
-+			vicap_toisp0: port@10 {
-+				reg = <16>;
-+			};
-+
-+			vicap_toisp1: port@11 {
-+				reg = <17>;
-+			};
-+		};
-+	};
-+
-+	vicap_mmu: iommu@fdce0800 {
-+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
-+		reg = <0x0 0xfdce0800 0x0 0x40>, <0x0 0xfdce0900 0x0 0x40>;
-+		interrupts = <GIC_SPI 113 IRQ_TYPE_LEVEL_HIGH 0>;
-+		clocks = <&cru ACLK_VICAP>, <&cru HCLK_VICAP>;
-+		clock-names = "aclk", "iface";
-+		#iommu-cells = <0>;
-+		power-domains = <&power RK3588_PD_VI>;
-+		rockchip,disable-mmu-reset;
-+		status = "disabled";
-+	};
-+
-+	csi2: csi@fdd30000 {
-+		compatible = "rockchip,rk3588-mipi-csi2", "rockchip,rk3568-mipi-csi2";
-+		reg = <0x0 0xfdd30000 0x0 0x10000>;
-+		interrupts = <GIC_SPI 147 IRQ_TYPE_LEVEL_HIGH 0>,
-+			     <GIC_SPI 148 IRQ_TYPE_LEVEL_HIGH 0>;
-+		interrupt-names = "err1", "err2";
-+		clocks = <&cru PCLK_CSI_HOST_2>;
-+		phys = <&csi_dphy0>;
-+		power-domains = <&power RK3588_PD_VI>;
-+		resets = <&cru SRST_P_CSI_HOST_2>;
-+		status = "disabled";
-+
-+		ports {
-+			#address-cells = <1>;
-+			#size-cells = <0>;
-+
-+			csi2_in: port@0 {
-+				reg = <0>;
-+			};
-+
-+			csi2_out: port@1 {
-+				reg = <1>;
-+
-+				csi2_output: endpoint {
-+					remote-endpoint = <&vicap_mipi2_input>;
-+				};
-+			};
-+		};
-+	};
-+
-+	csi4: csi@fdd50000 {
-+		compatible = "rockchip,rk3588-mipi-csi2", "rockchip,rk3568-mipi-csi2";
-+		reg = <0x0 0xfdd50000 0x0 0x10000>;
-+		interrupts = <GIC_SPI 151 IRQ_TYPE_LEVEL_HIGH 0>,
-+			     <GIC_SPI 152 IRQ_TYPE_LEVEL_HIGH 0>;
-+		interrupt-names = "err1", "err2";
-+		clocks = <&cru PCLK_CSI_HOST_4>;
-+		phys = <&csi_dphy1>;
-+		power-domains = <&power RK3588_PD_VI>;
-+		resets = <&cru SRST_P_CSI_HOST_4>;
-+		status = "disabled";
-+
-+		ports {
-+			#address-cells = <1>;
-+			#size-cells = <0>;
-+
-+			csi4_in: port@0 {
-+				reg = <0>;
-+			};
-+
-+			csi4_out: port@1 {
-+				reg = <1>;
-+
-+				csi4_output: endpoint {
-+					remote-endpoint = <&vicap_mipi4_input>;
-+				};
-+			};
-+		};
-+	};
-+
- 	vop: vop@fdd90000 {
- 		compatible = "rockchip,rk3588-vop";
- 		reg = <0x0 0xfdd90000 0x0 0x4200>, <0x0 0xfdd95000 0x0 0x1000>;
-diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
-index 32861d08a3b8..95a536523777 100644
---- a/arch/arm64/configs/defconfig
-+++ b/arch/arm64/configs/defconfig
+Index: linux-6.18.44/arch/arm64/configs/defconfig
+===================================================================
+--- linux-6.18.44.orig/arch/arm64/configs/defconfig
++++ linux-6.18.44/arch/arm64/configs/defconfig
 @@ -860,6 +860,7 @@ CONFIG_SDR_PLATFORM_DRIVERS=y
  CONFIG_V4L_MEM2MEM_DRIVERS=y
  CONFIG_VIDEO_AMPHION_VPU=m
@@ -329,32 +174,33 @@ index 32861d08a3b8..95a536523777 100644
  CONFIG_VIDEO_MEDIATEK_JPEG=m
  CONFIG_VIDEO_MEDIATEK_VCODEC=m
  CONFIG_VIDEO_WAVE_VPU=m
-diff --git a/drivers/media/platform/rockchip/Kconfig b/drivers/media/platform/rockchip/Kconfig
-index 9bbeec4996aa..ba401d32f01b 100644
---- a/drivers/media/platform/rockchip/Kconfig
-+++ b/drivers/media/platform/rockchip/Kconfig
-@@ -3,5 +3,6 @@
+Index: linux-6.18.44/drivers/media/platform/rockchip/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/Kconfig
++++ linux-6.18.44/drivers/media/platform/rockchip/Kconfig
+@@ -3,6 +3,7 @@
  comment "Rockchip media platform drivers"
  
  source "drivers/media/platform/rockchip/rga/Kconfig"
 +source "drivers/media/platform/rockchip/rkcif/Kconfig"
  source "drivers/media/platform/rockchip/rkisp1/Kconfig"
  source "drivers/media/platform/rockchip/rkvdec/Kconfig"
-diff --git a/drivers/media/platform/rockchip/Makefile b/drivers/media/platform/rockchip/Makefile
-index 286dc5c53f7e..0e0b2cbbd4bd 100644
---- a/drivers/media/platform/rockchip/Makefile
-+++ b/drivers/media/platform/rockchip/Makefile
-@@ -1,4 +1,5 @@
+ source "drivers/media/platform/rockchip/rkvenc/Kconfig"
+Index: linux-6.18.44/drivers/media/platform/rockchip/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/Makefile
++++ linux-6.18.44/drivers/media/platform/rockchip/Makefile
+@@ -1,5 +1,6 @@
  # SPDX-License-Identifier: GPL-2.0-only
  obj-y += rga/
 +obj-y += rkcif/
  obj-y += rkisp1/
  obj-y += rkvdec/
-diff --git a/drivers/media/platform/rockchip/rkcif/Kconfig b/drivers/media/platform/rockchip/rkcif/Kconfig
-new file mode 100644
-index 000000000000..efd82ac35bd8
+ obj-y += rkvenc/
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/Kconfig
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/Kconfig
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/Kconfig
 @@ -0,0 +1,18 @@
 +config VIDEO_ROCKCHIP_CIF
 +	tristate "Rockchip Camera Interface (CIF)"
@@ -374,11 +220,10 @@ index 000000000000..efd82ac35bd8
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called rockchip-cif.
-diff --git a/drivers/media/platform/rockchip/rkcif/Makefile b/drivers/media/platform/rockchip/rkcif/Makefile
-new file mode 100644
-index 000000000000..dca2bf45159f
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/Makefile
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/Makefile
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/Makefile
 @@ -0,0 +1,8 @@
 +# SPDX-License-Identifier: GPL-2.0
 +obj-$(CONFIG_VIDEO_ROCKCHIP_CIF) += rockchip-cif.o
@@ -388,11 +233,10 @@ index 000000000000..dca2bf45159f
 +rockchip-cif-objs += rkcif-dev.o
 +rockchip-cif-objs += rkcif-interface.o
 +rockchip-cif-objs += rkcif-stream.o
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.c b/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.c
-new file mode 100644
-index 000000000000..dbaf7636aeeb
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.c
 @@ -0,0 +1,865 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -1259,11 +1103,10 @@ index 000000000000..dbaf7636aeeb
 +
 +	rkcif_interface_unregister(interface);
 +}
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.h b/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.h
-new file mode 100644
-index 000000000000..a4ed37833bd6
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-dvp.h
 @@ -0,0 +1,25 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -1290,11 +1133,10 @@ index 000000000000..a4ed37833bd6
 +irqreturn_t rkcif_dvp_isr(int irq, void *ctx);
 +
 +#endif
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
-new file mode 100644
-index 000000000000..ef3a2426ba84
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
 @@ -0,0 +1,1009 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -2305,11 +2147,10 @@ index 000000000000..ef3a2426ba84
 +		rkcif_interface_unregister(interface);
 +	}
 +}
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.h b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.h
-new file mode 100644
-index 000000000000..7edaca44f653
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.h
 @@ -0,0 +1,24 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -2335,11 +2176,10 @@ index 000000000000..7edaca44f653
 +irqreturn_t rkcif_mipi_isr(int irq, void *ctx);
 +
 +#endif
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-common.h b/drivers/media/platform/rockchip/rkcif/rkcif-common.h
-new file mode 100644
-index 000000000000..ea92720dfb9b
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-common.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-common.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-common.h
 @@ -0,0 +1,250 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -2591,11 +2431,10 @@ index 000000000000..ea92720dfb9b
 +};
 +
 +#endif
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-dev.c b/drivers/media/platform/rockchip/rkcif/rkcif-dev.c
-new file mode 100644
-index 000000000000..be3a174b9aab
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-dev.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-dev.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-dev.c
 @@ -0,0 +1,321 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -2918,11 +2757,10 @@ index 000000000000..be3a174b9aab
 +
 +MODULE_DESCRIPTION("Rockchip Camera Interface (CIF) platform driver");
 +MODULE_LICENSE("GPL");
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-interface.c b/drivers/media/platform/rockchip/rkcif/rkcif-interface.c
-new file mode 100644
-index 000000000000..523103872b7a
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-interface.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-interface.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-interface.c
 @@ -0,0 +1,442 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -3366,11 +3204,10 @@ index 000000000000..523103872b7a
 +	else
 +		return NULL;
 +}
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-interface.h b/drivers/media/platform/rockchip/rkcif/rkcif-interface.h
-new file mode 100644
-index 000000000000..f13aa28b6fa7
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-interface.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-interface.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-interface.h
 @@ -0,0 +1,31 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -3403,11 +3240,10 @@ index 000000000000..f13aa28b6fa7
 +			       u32 mbus_code);
 +
 +#endif
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-regs.h b/drivers/media/platform/rockchip/rkcif/rkcif-regs.h
-new file mode 100644
-index 000000000000..3cf7ee19de30
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-regs.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-regs.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-regs.h
 @@ -0,0 +1,153 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -3562,11 +3398,10 @@ index 000000000000..3cf7ee19de30
 +};
 +
 +#endif
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-stream.c b/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
-new file mode 100644
-index 000000000000..a6e699f63120
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
 @@ -0,0 +1,645 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -4213,11 +4048,10 @@ index 000000000000..a6e699f63120
 +		return NULL;
 +	}
 +}
-diff --git a/drivers/media/platform/rockchip/rkcif/rkcif-stream.h b/drivers/media/platform/rockchip/rkcif/rkcif-stream.h
-new file mode 100644
-index 000000000000..590faf5d1a87
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-stream.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/rockchip/rkcif/rkcif-stream.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkcif/rkcif-stream.h
 @@ -0,0 +1,32 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -4251,10 +4085,10 @@ index 000000000000..590faf5d1a87
 +			     u32 pixelfmt);
 +
 +#endif
-diff --git a/drivers/media/platform/synopsys/Kconfig b/drivers/media/platform/synopsys/Kconfig
-index 4fd521f78425..e798ec00b189 100644
---- a/drivers/media/platform/synopsys/Kconfig
-+++ b/drivers/media/platform/synopsys/Kconfig
+Index: linux-6.18.44/drivers/media/platform/synopsys/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/synopsys/Kconfig
++++ linux-6.18.44/drivers/media/platform/synopsys/Kconfig
 @@ -1,3 +1,21 @@
  # SPDX-License-Identifier: GPL-2.0-only
  
@@ -4277,20 +4111,19 @@ index 4fd521f78425..e798ec00b189 100644
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called dw-mipi-csi2rx.
-diff --git a/drivers/media/platform/synopsys/Makefile b/drivers/media/platform/synopsys/Makefile
-index 3b12c574dd67..e0232ee23304 100644
---- a/drivers/media/platform/synopsys/Makefile
-+++ b/drivers/media/platform/synopsys/Makefile
+Index: linux-6.18.44/drivers/media/platform/synopsys/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/media/platform/synopsys/Makefile
++++ linux-6.18.44/drivers/media/platform/synopsys/Makefile
 @@ -1,2 +1,4 @@
  # SPDX-License-Identifier: GPL-2.0-only
  obj-y += hdmirx/
 +
 +obj-$(CONFIG_VIDEO_DW_MIPI_CSI2RX) += dw-mipi-csi2rx.o
-diff --git a/drivers/media/platform/synopsys/dw-mipi-csi2rx.c b/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
-new file mode 100644
-index 000000000000..2710433096fb
+Index: linux-6.18.44/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
++++ linux-6.18.44/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
 @@ -0,0 +1,788 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*

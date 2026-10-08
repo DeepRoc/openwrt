@@ -17,7 +17,6 @@
 #include <dt-bindings/soc/rockchip,vop2.h>
 
 #include "rk3588-friendlyelec-cm3588.dtsi"
-#include "rk3588-rkvenc-mpp.dtsi"
 
 #define ENABLE_CAM31 1
 #define ENABLE_CAM57 1
@@ -25,6 +24,19 @@
 / {
 	model = "FriendlyElec CM3588 GMSL";
 	compatible = "friendlyarm,cm3588-gmsl", "friendlyarm,cm3588", "rockchip,rk3588";
+
+	reserved-memory {
+	    #address-cells = <2>;
+	    #size-cells = <2>;
+	    ranges;
+
+	    linux,cma {
+	    	  compatible = "shared-dma-pool";
+		  reusable;
+		  size = <0x0 0x10000000>; /* 256MB */
+		  linux,cma-default;
+	    };
+	};
 
 	adc_key_recovery: adc-key-recovery {
 		compatible = "adc-keys";
@@ -1026,4 +1038,46 @@
 		reg = <ROCKCHIP_VOP2_EP_DP0>;
 		remote-endpoint = <&dp0_in_vp2>;
 	};
+};
+
+/* Enable Rockchip hardware video encoder */
+&mpp_srv {
+	status = "okay";
+};
+
+&venc_ccu {
+	status = "okay";
+};
+
+&venc0 {
+	status = "okay";
+};
+
+&venc0_mmu {
+	status = "okay";
+};
+
+&venc1 {
+	status = "okay";
+};
+
+&venc1_mmu {
+	status = "okay";
+};
+
+/* Enable Rockchip hardware video decoder */
+&vdec0 {
+	status = "okay";
+};
+
+&vdec0_mmu {
+	status = "okay";
+};
+
+&vdec1 {
+	status = "okay";
+};
+
+&vdec1_mmu {
+	status = "okay";
 };

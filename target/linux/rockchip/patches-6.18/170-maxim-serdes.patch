@@ -1,8 +1,7 @@
-diff --git a/Documentation/devicetree/bindings/media/i2c/maxim,max9296a.yaml b/Documentation/devicetree/bindings/media/i2c/maxim,max9296a.yaml
-new file mode 100644
-index 000000000000..de6bfcec5dc6
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max9296a.yaml
+===================================================================
 --- /dev/null
-+++ b/Documentation/devicetree/bindings/media/i2c/maxim,max9296a.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max9296a.yaml
 @@ -0,0 +1,242 @@
 +# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
 +# Copyright (C) 2024 Collabora Ltd.
@@ -246,10 +245,10 @@ index 000000000000..de6bfcec5dc6
 +        };
 +    };
 +...
-diff --git a/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml b/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
-index 26f85151afbd..ab1dcd8ff8e7 100644
---- a/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
-+++ b/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
+===================================================================
+--- linux-6.18.44.orig/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96712.yaml
 @@ -23,12 +23,17 @@ description: |
    MAX96712 can be paired with first-generation 3.12Gbps or 1.5Gbps GMSL1
    serializers or operate up to 3.12Gbps with GMSL2 serializers in GMSL1 mode.
@@ -367,10 +366,10 @@ index 26f85151afbd..ab1dcd8ff8e7 100644
  examples:
    - |
      #include <dt-bindings/gpio/gpio.h>
-diff --git a/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml b/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
-index 3ace50e11921..ec6a91c4a51c 100644
---- a/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
-+++ b/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
+===================================================================
+--- linux-6.18.44.orig/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96714.yaml
 @@ -22,7 +22,9 @@ description:
  
    The GMSL2 serial link operates at a fixed rate of 3Gbps or 6Gbps in the
@@ -390,10 +389,10 @@ index 3ace50e11921..ec6a91c4a51c 100644
            - const: maxim,max96714f
  
    reg:
-diff --git a/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml b/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
-index d1e8ba6e368e..0d53637a6991 100644
---- a/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
-+++ b/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
+===================================================================
+--- linux-6.18.44.orig/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/i2c/maxim,max96717.yaml
 @@ -24,15 +24,23 @@ description:
  
    The GMSL2 serial link operates at a fixed rate of 3Gbps or 6Gbps in the
@@ -577,11 +576,11 @@ index d1e8ba6e368e..0d53637a6991 100644
  examples:
    - |
      #include <dt-bindings/gpio/gpio.h>
-diff --git a/Documentation/userspace-api/media/mediactl/media-types.rst b/Documentation/userspace-api/media/mediactl/media-types.rst
-index 6332e8395263..200c37a1da26 100644
---- a/Documentation/userspace-api/media/mediactl/media-types.rst
-+++ b/Documentation/userspace-api/media/mediactl/media-types.rst
-@@ -361,6 +361,7 @@ Types and flags used to represent the media graph elements
+Index: linux-6.18.44/Documentation/userspace-api/media/mediactl/media-types.rst
+===================================================================
+--- linux-6.18.44.orig/Documentation/userspace-api/media/mediactl/media-types.rst
++++ linux-6.18.44/Documentation/userspace-api/media/mediactl/media-types.rst
+@@ -361,6 +361,7 @@ Types and flags used to represent the me
  .. _MEDIA-PAD-FL-SINK:
  .. _MEDIA-PAD-FL-SOURCE:
  .. _MEDIA-PAD-FL-MUST-CONNECT:
@@ -589,7 +588,7 @@ index 6332e8395263..200c37a1da26 100644
  
  .. flat-table:: Media pad flags
      :header-rows:  0
-@@ -381,6 +382,14 @@ Types and flags used to represent the media graph elements
+@@ -381,6 +382,14 @@ Types and flags used to represent the me
  	  enabled links even when this flag isn't set; the absence of the flag
  	  doesn't imply there is none.
  
@@ -604,11 +603,11 @@ index 6332e8395263..200c37a1da26 100644
  
  One and only one of ``MEDIA_PAD_FL_SINK`` and ``MEDIA_PAD_FL_SOURCE``
  must be set for every pad.
-diff --git a/MAINTAINERS b/MAINTAINERS
-index d27beeb0d9b8..f87a5b001c8b 100644
---- a/MAINTAINERS
-+++ b/MAINTAINERS
-@@ -15266,6 +15266,13 @@ S:	Maintained
+Index: linux-6.18.44/MAINTAINERS
+===================================================================
+--- linux-6.18.44.orig/MAINTAINERS
++++ linux-6.18.44/MAINTAINERS
+@@ -15273,6 +15273,13 @@ S:	Maintained
  F:	Documentation/devicetree/bindings/iio/proximity/maxbotix,mb1232.yaml
  F:	drivers/iio/proximity/mb1232.c
  
@@ -622,10 +621,10 @@ index d27beeb0d9b8..f87a5b001c8b 100644
  MAXIM MAX11205 DRIVER
  M:	Ramona Bolboaca <ramona.bolboaca@analog.com>
  L:	linux-iio@vger.kernel.org
-diff --git a/arch/arm64/configs/defconfig b/arch/arm64/configs/defconfig
-index 32861d08a3b8..39f7e6f2838e 100644
---- a/arch/arm64/configs/defconfig
-+++ b/arch/arm64/configs/defconfig
+Index: linux-6.18.44/arch/arm64/configs/defconfig
+===================================================================
+--- linux-6.18.44.orig/arch/arm64/configs/defconfig
++++ linux-6.18.44/arch/arm64/configs/defconfig
 @@ -1318,7 +1318,6 @@ CONFIG_GREYBUS=m
  CONFIG_GREYBUS_BEAGLEPLAY=m
  CONFIG_STAGING=y
@@ -634,10 +633,10 @@ index 32861d08a3b8..39f7e6f2838e 100644
  CONFIG_VIDEO_MESON_VDEC=m
  CONFIG_SND_BCM2835=m
  CONFIG_CHROME_PLATFORMS=y
-diff --git a/drivers/media/i2c/Kconfig b/drivers/media/i2c/Kconfig
-index cdd7ba5da0d5..669da3c63ad8 100644
---- a/drivers/media/i2c/Kconfig
-+++ b/drivers/media/i2c/Kconfig
+Index: linux-6.18.44/drivers/media/i2c/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/media/i2c/Kconfig
++++ linux-6.18.44/drivers/media/i2c/Kconfig
 @@ -1684,39 +1684,7 @@ config VIDEO_DS90UB960
  	  Device driver for the Texas Instruments DS90UB960
  	  FPD-Link III Deserializer and DS90UB9702 FPD-Link IV Deserializer.
@@ -679,11 +678,11 @@ index cdd7ba5da0d5..669da3c63ad8 100644
  
  endmenu
  
-diff --git a/drivers/media/i2c/Makefile b/drivers/media/i2c/Makefile
-index 57cdd8dc96f6..333e4243ea2f 100644
---- a/drivers/media/i2c/Makefile
-+++ b/drivers/media/i2c/Makefile
-@@ -69,8 +69,7 @@ obj-$(CONFIG_VIDEO_LT6911UXE) += lt6911uxe.o
+Index: linux-6.18.44/drivers/media/i2c/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/media/i2c/Makefile
++++ linux-6.18.44/drivers/media/i2c/Makefile
+@@ -69,8 +69,7 @@ obj-$(CONFIG_VIDEO_LT6911UXE) += lt6911u
  obj-$(CONFIG_VIDEO_M52790) += m52790.o
  obj-$(CONFIG_VIDEO_MAX9271_LIB) += max9271.o
  obj-$(CONFIG_VIDEO_MAX9286) += max9286.o
@@ -693,10 +692,9 @@ index 57cdd8dc96f6..333e4243ea2f 100644
  obj-$(CONFIG_VIDEO_ML86V7667) += ml86v7667.o
  obj-$(CONFIG_VIDEO_MSP3400) += msp3400.o
  obj-$(CONFIG_VIDEO_MT9M001) += mt9m001.o
-diff --git a/drivers/media/i2c/max96714.c b/drivers/media/i2c/max96714.c
-deleted file mode 100644
-index e3e625e6f11a..000000000000
---- a/drivers/media/i2c/max96714.c
+Index: linux-6.18.44/drivers/media/i2c/max96714.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/i2c/max96714.c
 +++ /dev/null
 @@ -1,1017 +0,0 @@
 -// SPDX-License-Identifier: GPL-2.0
@@ -1716,10 +1714,9 @@ index e3e625e6f11a..000000000000
 -MODULE_LICENSE("GPL");
 -MODULE_DESCRIPTION("Maxim Integrated GMSL2 Deserializers Driver");
 -MODULE_AUTHOR("Julien Massot <julien.massot@collabora.com>");
-diff --git a/drivers/media/i2c/max96717.c b/drivers/media/i2c/max96717.c
-deleted file mode 100644
-index c8ae7890d9fa..000000000000
---- a/drivers/media/i2c/max96717.c
+Index: linux-6.18.44/drivers/media/i2c/max96717.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/i2c/max96717.c
 +++ /dev/null
 @@ -1,1102 +0,0 @@
 -// SPDX-License-Identifier: GPL-2.0
@@ -2824,11 +2821,10 @@ index c8ae7890d9fa..000000000000
 -MODULE_DESCRIPTION("Maxim GMSL2 MAX96717 Serializer Driver");
 -MODULE_AUTHOR("Julien Massot <julien.massot@collabora.com>");
 -MODULE_LICENSE("GPL");
-diff --git a/drivers/media/i2c/maxim-serdes/Kconfig b/drivers/media/i2c/maxim-serdes/Kconfig
-new file mode 100644
-index 000000000000..d0c70d678699
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/Kconfig
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/Kconfig
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/Kconfig
 @@ -0,0 +1,63 @@
 +# SPDX-License-Identifier: GPL-2.0
 +
@@ -2893,11 +2889,10 @@ index 000000000000..d0c70d678699
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called max9296a.
-diff --git a/drivers/media/i2c/maxim-serdes/Makefile b/drivers/media/i2c/maxim-serdes/Makefile
-new file mode 100644
-index 000000000000..ae306bc33bfb
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/Makefile
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/Makefile
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/Makefile
 @@ -0,0 +1,6 @@
 +# SPDX-License-Identifier: GPL-2.0
 +max-serdes-objs := max_serdes.o max_ser.o max_des.o
@@ -2905,11 +2900,10 @@ index 000000000000..ae306bc33bfb
 +obj-$(CONFIG_VIDEO_MAX96717) += max96717.o
 +obj-$(CONFIG_VIDEO_MAX96724) += max96724.o
 +obj-$(CONFIG_VIDEO_MAX9296A) += max9296a.o
-diff --git a/drivers/media/i2c/maxim-serdes/max9296a.c b/drivers/media/i2c/maxim-serdes/max9296a.c
-new file mode 100644
-index 000000000000..3dcdb63dbb9e
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max9296a.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max9296a.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max9296a.c
 @@ -0,0 +1,1369 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -4280,11 +4274,10 @@ index 000000000000..3dcdb63dbb9e
 +MODULE_DESCRIPTION("Maxim MAX9296A Quad GMSL2 Deserializer Driver");
 +MODULE_AUTHOR("Cosmin Tanislav <cosmin.tanislav@analog.com>");
 +MODULE_LICENSE("GPL");
-diff --git a/drivers/media/i2c/maxim-serdes/max96717.c b/drivers/media/i2c/maxim-serdes/max96717.c
-new file mode 100644
-index 000000000000..93af16711bcd
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max96717.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max96717.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max96717.c
 @@ -0,0 +1,1715 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -6001,11 +5994,10 @@ index 000000000000..93af16711bcd
 +MODULE_DESCRIPTION("MAX96717 GMSL2 Serializer Driver");
 +MODULE_AUTHOR("Cosmin Tanislav <cosmin.tanislav@analog.com>");
 +MODULE_LICENSE("GPL");
-diff --git a/drivers/media/i2c/maxim-serdes/max96724.c b/drivers/media/i2c/maxim-serdes/max96724.c
-new file mode 100644
-index 000000000000..1a3999d4a3f0
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max96724.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max96724.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max96724.c
 @@ -0,0 +1,1285 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -7292,11 +7284,10 @@ index 000000000000..1a3999d4a3f0
 +MODULE_DESCRIPTION("Maxim MAX96724 Quad GMSL2 Deserializer Driver");
 +MODULE_AUTHOR("Cosmin Tanislav <cosmin.tanislav@analog.com>");
 +MODULE_LICENSE("GPL");
-diff --git a/drivers/media/i2c/maxim-serdes/max_des.c b/drivers/media/i2c/maxim-serdes/max_des.c
-new file mode 100644
-index 000000000000..441d14cbbc0b
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_des.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_des.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_des.c
 @@ -0,0 +1,3467 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -10765,11 +10756,10 @@ index 000000000000..441d14cbbc0b
 +
 +MODULE_LICENSE("GPL");
 +MODULE_IMPORT_NS("I2C_ATR");
-diff --git a/drivers/media/i2c/maxim-serdes/max_des.h b/drivers/media/i2c/maxim-serdes/max_des.h
-new file mode 100644
-index 000000000000..359d54dacdb3
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_des.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_des.h
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_des.h
 @@ -0,0 +1,168 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -10939,11 +10929,10 @@ index 000000000000..359d54dacdb3
 +int max_des_phy_hw_data_lanes(struct max_des *des, struct max_des_phy *phy);
 +
 +#endif // MAX_DES_H
-diff --git a/drivers/media/i2c/maxim-serdes/max_ser.c b/drivers/media/i2c/maxim-serdes/max_ser.c
-new file mode 100644
-index 000000000000..39b21164e4c5
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_ser.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_ser.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_ser.c
 @@ -0,0 +1,2342 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -13287,11 +13276,10 @@ index 000000000000..39b21164e4c5
 +
 +MODULE_LICENSE("GPL");
 +MODULE_IMPORT_NS("I2C_ATR");
-diff --git a/drivers/media/i2c/maxim-serdes/max_ser.h b/drivers/media/i2c/maxim-serdes/max_ser.h
-new file mode 100644
-index 000000000000..707fad850209
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_ser.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_ser.h
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_ser.h
 @@ -0,0 +1,152 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -13445,11 +13433,10 @@ index 000000000000..707fad850209
 +int max_ser_write_reg(struct i2c_adapter *adapter, u8 addr, u16 reg, u8 val);
 +
 +#endif // MAX_SER_H
-diff --git a/drivers/media/i2c/maxim-serdes/max_serdes.c b/drivers/media/i2c/maxim-serdes/max_serdes.c
-new file mode 100644
-index 000000000000..7d013c4739d1
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_serdes.c
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_serdes.c
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_serdes.c
 @@ -0,0 +1,413 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
@@ -13864,11 +13851,10 @@ index 000000000000..7d013c4739d1
 +MODULE_DESCRIPTION("Maxim GMSL2 Serializer/Deserializer Driver");
 +MODULE_AUTHOR("Cosmin Tanislav <cosmin.tanislav@analog.com>");
 +MODULE_LICENSE("GPL");
-diff --git a/drivers/media/i2c/maxim-serdes/max_serdes.h b/drivers/media/i2c/maxim-serdes/max_serdes.h
-new file mode 100644
-index 000000000000..1679b38fc8ae
+Index: linux-6.18.44/drivers/media/i2c/maxim-serdes/max_serdes.h
+===================================================================
 --- /dev/null
-+++ b/drivers/media/i2c/maxim-serdes/max_serdes.h
++++ linux-6.18.44/drivers/media/i2c/maxim-serdes/max_serdes.h
 @@ -0,0 +1,181 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
@@ -14051,11 +14037,11 @@ index 000000000000..1679b38fc8ae
 +int max_serdes_validate_tpg_routing(struct v4l2_subdev_krouting *routing);
 +
 +#endif // MAX_SERDES_H
-diff --git a/drivers/media/mc/mc-entity.c b/drivers/media/mc/mc-entity.c
-index 9519a537bfa2..df20356fa98b 100644
---- a/drivers/media/mc/mc-entity.c
-+++ b/drivers/media/mc/mc-entity.c
-@@ -209,11 +209,16 @@ int media_entity_pads_init(struct media_entity *entity, u16 num_pads,
+Index: linux-6.18.44/drivers/media/mc/mc-entity.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/mc/mc-entity.c
++++ linux-6.18.44/drivers/media/mc/mc-entity.c
+@@ -209,11 +209,16 @@ int media_entity_pads_init(struct media_
  		mutex_lock(&mdev->graph_mutex);
  
  	media_entity_for_each_pad(entity, iter) {
@@ -14074,7 +14060,7 @@ index 9519a537bfa2..df20356fa98b 100644
  			ret = -EINVAL;
  			break;
  		}
-@@ -1118,7 +1123,8 @@ int media_get_pad_index(struct media_entity *entity, u32 pad_type,
+@@ -1118,7 +1123,8 @@ int media_get_pad_index(struct media_ent
  
  	for (i = 0; i < entity->num_pads; i++) {
  		if ((entity->pads[i].flags &
@@ -14084,7 +14070,7 @@ index 9519a537bfa2..df20356fa98b 100644
  			continue;
  
  		if (entity->pads[i].sig_type == sig_type)
-@@ -1148,6 +1154,9 @@ media_create_pad_link(struct media_entity *source, u16 source_pad,
+@@ -1148,6 +1154,9 @@ media_create_pad_link(struct media_entit
  		return -EINVAL;
  	if (WARN_ON(!(sink->pads[sink_pad].flags & MEDIA_PAD_FL_SINK)))
  		return -EINVAL;
@@ -14094,10 +14080,10 @@ index 9519a537bfa2..df20356fa98b 100644
  
  	link = media_add_link(&source->links);
  	if (link == NULL)
-diff --git a/drivers/media/v4l2-core/v4l2-subdev.c b/drivers/media/v4l2-core/v4l2-subdev.c
-index 349022153b18..10d6c164e45e 100644
---- a/drivers/media/v4l2-core/v4l2-subdev.c
-+++ b/drivers/media/v4l2-core/v4l2-subdev.c
+Index: linux-6.18.44/drivers/media/v4l2-core/v4l2-subdev.c
+===================================================================
+--- linux-6.18.44.orig/drivers/media/v4l2-core/v4l2-subdev.c
++++ linux-6.18.44/drivers/media/v4l2-core/v4l2-subdev.c
 @@ -19,6 +19,7 @@
  #include <linux/types.h>
  #include <linux/version.h>
@@ -14115,7 +14101,7 @@ index 349022153b18..10d6c164e45e 100644
  #endif
  
  /*
-@@ -1038,6 +1039,9 @@ static long subdev_do_ioctl(struct file *file, unsigned int cmd, void *arg,
+@@ -1038,6 +1039,9 @@ static long subdev_do_ioctl(struct file
  		if (routing->which != V4L2_SUBDEV_FORMAT_TRY && ro_subdev)
  			return -EPERM;
  
@@ -14125,7 +14111,7 @@ index 349022153b18..10d6c164e45e 100644
  		if (routing->num_routes > routing->len_routes)
  			return -EINVAL;
  
-@@ -2351,14 +2355,14 @@ int v4l2_subdev_enable_streams(struct v4l2_subdev *sd, u32 pad,
+@@ -2351,14 +2355,14 @@ int v4l2_subdev_enable_streams(struct v4
  				    &found_streams, &enabled_streams);
  
  	if (found_streams != streams_mask) {
@@ -14142,7 +14128,7 @@ index 349022153b18..10d6c164e45e 100644
  			enabled_streams, sd->entity.name, pad);
  		ret = -EALREADY;
  		goto done;
-@@ -2379,7 +2383,7 @@ int v4l2_subdev_enable_streams(struct v4l2_subdev *sd, u32 pad,
+@@ -2379,7 +2383,7 @@ int v4l2_subdev_enable_streams(struct v4
  	}
  
  	if (ret) {
@@ -14151,11 +14137,11 @@ index 349022153b18..10d6c164e45e 100644
  			streams_mask, ret);
  		goto done;
  	}
-diff --git a/drivers/staging/media/Kconfig b/drivers/staging/media/Kconfig
-index ab250c89cd4d..edcec810433d 100644
---- a/drivers/staging/media/Kconfig
-+++ b/drivers/staging/media/Kconfig
-@@ -30,8 +30,6 @@ source "drivers/staging/media/ipu3/Kconfig"
+Index: linux-6.18.44/drivers/staging/media/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/staging/media/Kconfig
++++ linux-6.18.44/drivers/staging/media/Kconfig
+@@ -30,8 +30,6 @@ source "drivers/staging/media/ipu3/Kconf
  
  source "drivers/staging/media/ipu7/Kconfig"
  
@@ -14164,10 +14150,10 @@ index ab250c89cd4d..edcec810433d 100644
  source "drivers/staging/media/meson/vdec/Kconfig"
  
  source "drivers/staging/media/starfive/Kconfig"
-diff --git a/drivers/staging/media/Makefile b/drivers/staging/media/Makefile
-index 4a073938b2b2..e38421c81d0e 100644
---- a/drivers/staging/media/Makefile
-+++ b/drivers/staging/media/Makefile
+Index: linux-6.18.44/drivers/staging/media/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/staging/media/Makefile
++++ linux-6.18.44/drivers/staging/media/Makefile
 @@ -2,7 +2,6 @@
  obj-$(CONFIG_VIDEO_ATMEL_ISC_BASE)	+= deprecated/atmel/
  obj-$(CONFIG_INTEL_ATOMISP)     += atomisp/
@@ -14176,10 +14162,9 @@ index 4a073938b2b2..e38421c81d0e 100644
  obj-$(CONFIG_VIDEO_MESON_VDEC)	+= meson/vdec/
  obj-$(CONFIG_VIDEO_STARFIVE_CAMSS)	+= starfive/
  obj-$(CONFIG_VIDEO_SUNXI)	+= sunxi/
-diff --git a/drivers/staging/media/max96712/Kconfig b/drivers/staging/media/max96712/Kconfig
-deleted file mode 100644
-index 117fadf81bd0..000000000000
---- a/drivers/staging/media/max96712/Kconfig
+Index: linux-6.18.44/drivers/staging/media/max96712/Kconfig
+===================================================================
+--- linux-6.18.44.orig/drivers/staging/media/max96712/Kconfig
 +++ /dev/null
 @@ -1,14 +0,0 @@
 -# SPDX-License-Identifier: GPL-2.0
@@ -14196,18 +14181,16 @@ index 117fadf81bd0..000000000000
 -
 -	  To compile this driver as a module, choose M here: the
 -	  module will be called max96712.
-diff --git a/drivers/staging/media/max96712/Makefile b/drivers/staging/media/max96712/Makefile
-deleted file mode 100644
-index 70c1974ce3f0..000000000000
---- a/drivers/staging/media/max96712/Makefile
+Index: linux-6.18.44/drivers/staging/media/max96712/Makefile
+===================================================================
+--- linux-6.18.44.orig/drivers/staging/media/max96712/Makefile
 +++ /dev/null
 @@ -1,2 +0,0 @@
 -# SPDX-License-Identifier: GPL-2.0
 -obj-$(CONFIG_VIDEO_MAX96712) += max96712.o
-diff --git a/drivers/staging/media/max96712/max96712.c b/drivers/staging/media/max96712/max96712.c
-deleted file mode 100644
-index 0751b2e04895..000000000000
---- a/drivers/staging/media/max96712/max96712.c
+Index: linux-6.18.44/drivers/staging/media/max96712/max96712.c
+===================================================================
+--- linux-6.18.44.orig/drivers/staging/media/max96712/max96712.c
 +++ /dev/null
 @@ -1,487 +0,0 @@
 -// SPDX-License-Identifier: GPL-2.0
@@ -14697,10 +14680,10 @@ index 0751b2e04895..000000000000
 -MODULE_DESCRIPTION("Maxim MAX96712 Quad GMSL2 Deserializer Driver");
 -MODULE_AUTHOR("Niklas Söderlund <niklas.soderlund@ragnatech.se>");
 -MODULE_LICENSE("GPL");
-diff --git a/include/uapi/linux/media.h b/include/uapi/linux/media.h
-index 1c80b1d6bbaf..80cfd12a43fc 100644
---- a/include/uapi/linux/media.h
-+++ b/include/uapi/linux/media.h
+Index: linux-6.18.44/include/uapi/linux/media.h
+===================================================================
+--- linux-6.18.44.orig/include/uapi/linux/media.h
++++ linux-6.18.44/include/uapi/linux/media.h
 @@ -208,6 +208,7 @@ struct media_entity_desc {
  #define MEDIA_PAD_FL_SINK			(1U << 0)
  #define MEDIA_PAD_FL_SOURCE			(1U << 1)

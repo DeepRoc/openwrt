@@ -1,7 +1,7 @@
-Index: linux-6.18.39/Documentation/devicetree/bindings/media/rockchip-isp2.yaml
+Index: linux-6.18.44/Documentation/devicetree/bindings/media/rockchip-isp2.yaml
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/Documentation/devicetree/bindings/media/rockchip-isp2.yaml
++++ linux-6.18.44/Documentation/devicetree/bindings/media/rockchip-isp2.yaml
 @@ -0,0 +1,127 @@
 +# SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +%YAML 1.2
@@ -130,11 +130,11 @@ Index: linux-6.18.39/Documentation/devicetree/bindings/media/rockchip-isp2.yaml
 +            iommus = <&isp0_mmu>;
 +        };
 +    };
-Index: linux-6.18.39/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+Index: linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
 ===================================================================
---- linux-6.18.39.orig/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-+++ linux-6.18.39/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-@@ -3406,6 +3406,66 @@
+--- linux-6.18.44.orig/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
++++ linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+@@ -3681,6 +3681,66 @@
  			#interrupt-cells = <2>;
  		};
  	};
@@ -201,28 +201,28 @@ Index: linux-6.18.39/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
  };
  
  #include "rk3588-base-pinctrl.dtsi"
-Index: linux-6.18.39/drivers/media/platform/rockchip/Kconfig
+Index: linux-6.18.44/drivers/media/platform/rockchip/Kconfig
 ===================================================================
---- linux-6.18.39.orig/drivers/media/platform/rockchip/Kconfig
-+++ linux-6.18.39/drivers/media/platform/rockchip/Kconfig
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/Kconfig
++++ linux-6.18.44/drivers/media/platform/rockchip/Kconfig
 @@ -6,3 +6,4 @@ source "drivers/media/platform/rockchip/
  source "drivers/media/platform/rockchip/rkisp1/Kconfig"
  source "drivers/media/platform/rockchip/rkvdec/Kconfig"
  source "drivers/media/platform/rockchip/rkvenc/Kconfig"
 +source "drivers/media/platform/rockchip/rkisp2/Kconfig"
-Index: linux-6.18.39/drivers/media/platform/rockchip/Makefile
+Index: linux-6.18.44/drivers/media/platform/rockchip/Makefile
 ===================================================================
---- linux-6.18.39.orig/drivers/media/platform/rockchip/Makefile
-+++ linux-6.18.39/drivers/media/platform/rockchip/Makefile
+--- linux-6.18.44.orig/drivers/media/platform/rockchip/Makefile
++++ linux-6.18.44/drivers/media/platform/rockchip/Makefile
 @@ -3,3 +3,4 @@ obj-y += rga/
  obj-y += rkisp1/
  obj-y += rkvdec/
  obj-y += rkvenc/
 +obj-y += rkisp2/
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Kconfig
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/Kconfig
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Kconfig
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/Kconfig
 @@ -0,0 +1,20 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +config VIDEO_ROCKCHIP_ISP2
@@ -244,10 +244,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Kconfig
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called rockchip-isp2.
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Makefile
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/Makefile
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Makefile
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/Makefile
 @@ -0,0 +1,12 @@
 +# SPDX-License-Identifier: GPL-2.0-only
 +
@@ -261,10 +261,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/Makefile
 +rockchip-isp2-$(CONFIG_DEBUG_FS) += rkisp2-debug.o
 +
 +obj-$(CONFIG_VIDEO_ROCKCHIP_ISP2) += rockchip-isp2.o
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-capture.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-capture.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-capture.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-capture.c
 @@ -0,0 +1,1979 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -2245,10 +2245,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-capture.c
 +	return 0;
 +
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-common.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-common.c
 @@ -0,0 +1,180 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -2430,10 +2430,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.c
 +
 +	rkisp2_sd_adjust_crop_rect(crop, &crop_bounds);
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.h
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-common.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-common.h
 @@ -0,0 +1,509 @@
 +/* SPDX-License-Identifier: (GPL-2.0-or-later OR MIT) */
 +/*
@@ -2944,10 +2944,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-common.h
 +#endif
 +
 +#endif /* _RKISP2_COMMON_H */
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-debug.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-debug.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-debug.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-debug.c
 @@ -0,0 +1,220 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -3169,10 +3169,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-debug.c
 +{
 +	debugfs_remove_recursive(rkisp2->debug.debugfs_dir);
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dev.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-dev.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dev.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-dev.c
 @@ -0,0 +1,363 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -3537,10 +3537,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dev.c
 +module_platform_driver(rkisp2_drv);
 +MODULE_DESCRIPTION("Rockchip ISP2 platform driver");
 +MODULE_LICENSE("Dual MIT/GPL");
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dmarx.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-dmarx.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dmarx.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-dmarx.c
 @@ -0,0 +1,687 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -4229,10 +4229,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-dmarx.c
 +
 +	dmarx->num_chans = 0;
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-isp.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-isp.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-isp.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-isp.c
 @@ -0,0 +1,911 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -5145,10 +5145,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-isp.c
 +
 +	return IRQ_HANDLED;
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-params.c
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-params.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-params.c
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-params.c
 @@ -0,0 +1,775 @@
 +// SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 +/*
@@ -5925,10 +5925,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-params.c
 +	media_entity_cleanup(&vdev->entity);
 +	mutex_destroy(&node->vlock);
 +}
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v2x.h
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v2x.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v2x.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v2x.h
 @@ -0,0 +1,2588 @@
 +/* SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 + *
@@ -8518,10 +8518,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v2x.h
 +#define ISP21_SELF_FORCE_UPD		BIT(31)
 +
 +#endif /* _RKISP_REGS_V2X_H */
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v3x.h
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v3x.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v3x.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v3x.h
 @@ -0,0 +1,3414 @@
 +/* SPDX-License-Identifier: (GPL-2.0-or-later OR MIT)
 + *
@@ -11937,10 +11937,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs-v3x.h
 +#define ISP35_AIAWB_SELF_UPD		BIT(30)
 +
 +#endif /* _RKISP2_REGS_V3X_H */
-Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs.h
+Index: linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs.h
++++ linux-6.18.44/drivers/media/platform/rockchip/rkisp2/rkisp2-regs.h
 @@ -0,0 +1,1736 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
@@ -13678,10 +13678,10 @@ Index: linux-6.18.39/drivers/media/platform/rockchip/rkisp2/rkisp2-regs.h
 +#define RKISP2_CIF_ISP_CSI0_VERSION		(RKISP2_CIF_ISP_CSI0_BASE + 0x0000007c)
 +
 +#endif /* _RKISP2_REGS_H */
-Index: linux-6.18.39/drivers/media/v4l2-core/v4l2-ioctl.c
+Index: linux-6.18.44/drivers/media/v4l2-core/v4l2-ioctl.c
 ===================================================================
---- linux-6.18.39.orig/drivers/media/v4l2-core/v4l2-ioctl.c
-+++ linux-6.18.39/drivers/media/v4l2-core/v4l2-ioctl.c
+--- linux-6.18.44.orig/drivers/media/v4l2-core/v4l2-ioctl.c
++++ linux-6.18.44/drivers/media/v4l2-core/v4l2-ioctl.c
 @@ -1467,6 +1467,7 @@ static void v4l_fill_fmtdesc(struct v4l2
  	case V4L2_META_FMT_RK_ISP1_PARAMS:	descr = "Rockchip ISP1 3A Parameters"; break;
  	case V4L2_META_FMT_RK_ISP1_STAT_3A:	descr = "Rockchip ISP1 3A Statistics"; break;
@@ -13690,10 +13690,10 @@ Index: linux-6.18.39/drivers/media/v4l2-core/v4l2-ioctl.c
  	case V4L2_META_FMT_C3ISP_PARAMS:	descr = "Amlogic C3 ISP Parameters"; break;
  	case V4L2_META_FMT_C3ISP_STATS:		descr = "Amlogic C3 ISP Statistics"; break;
  	case V4L2_PIX_FMT_NV12_8L128:	descr = "NV12 (8x128 Linear)"; break;
-Index: linux-6.18.39/include/uapi/linux/rkisp1-config.h
+Index: linux-6.18.44/include/uapi/linux/rkisp1-config.h
 ===================================================================
---- linux-6.18.39.orig/include/uapi/linux/rkisp1-config.h
-+++ linux-6.18.39/include/uapi/linux/rkisp1-config.h
+--- linux-6.18.44.orig/include/uapi/linux/rkisp1-config.h
++++ linux-6.18.44/include/uapi/linux/rkisp1-config.h
 @@ -207,6 +207,7 @@ enum rkisp1_cif_isp_version {
  	RKISP1_V12,
  	RKISP1_V13,
@@ -13702,10 +13702,10 @@ Index: linux-6.18.39/include/uapi/linux/rkisp1-config.h
  };
  
  enum rkisp1_cif_isp_histogram_mode {
-Index: linux-6.18.39/include/uapi/linux/rkisp2-config.h
+Index: linux-6.18.44/include/uapi/linux/rkisp2-config.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.39/include/uapi/linux/rkisp2-config.h
++++ linux-6.18.44/include/uapi/linux/rkisp2-config.h
 @@ -0,0 +1,334 @@
 +/* SPDX-License-Identifier: ((GPL-2.0-or-later WITH Linux-syscall-note) OR MIT) */
 +/*
@@ -14041,10 +14041,10 @@ Index: linux-6.18.39/include/uapi/linux/rkisp2-config.h
 +	sizeof(struct rkisp2_params_lsc))
 +
 +#endif /* _UAPI_RKISP2_CONFIG_H */
-Index: linux-6.18.39/include/uapi/linux/videodev2.h
+Index: linux-6.18.44/include/uapi/linux/videodev2.h
 ===================================================================
---- linux-6.18.39.orig/include/uapi/linux/videodev2.h
-+++ linux-6.18.39/include/uapi/linux/videodev2.h
+--- linux-6.18.44.orig/include/uapi/linux/videodev2.h
++++ linux-6.18.44/include/uapi/linux/videodev2.h
 @@ -875,6 +875,9 @@ struct v4l2_pix_format {
  #define V4L2_META_FMT_RK_ISP1_STAT_3A	v4l2_fourcc('R', 'K', '1', 'S') /* Rockchip ISP1 3A Statistics */
  #define V4L2_META_FMT_RK_ISP1_EXT_PARAMS	v4l2_fourcc('R', 'K', '1', 'E') /* Rockchip ISP1 3a Extensible Parameters */
