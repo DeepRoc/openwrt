@@ -1173,7 +1173,8 @@ function bss_check_mld(phydev, iface_name, bss)
 
 function iface_check_mld(phydev, name, config)
 {
-	phydev = phy_open(phydev.phy);
+	if (phydev)
+		phydev = phy_open(phydev.phy);
 
 	for (let mld_name, mld_data in hostapd.data.mld)
 		delete mld_data.iface[name];
@@ -1262,7 +1263,8 @@ function iface_set_config(name, config)
 
 	let phy = config.phy;
 	let phydev = phy_open(phy, config.radio_idx);
-	if (!phydev) {
+	// Teardown must also work after the PHY has disappeared.
+	if (!phydev && length(config.bss)) {
 		hostapd.printf(`Failed to open phy ${phy}`);
 		return false;
 	}
@@ -1271,7 +1273,8 @@ function iface_set_config(name, config)
 	iface_check_mld(phydev, name, config);
 	if (!length(config.bss)) {
 		iface_macaddr_prune(name, config);
-		return iface_config_remove(name, old_config);
+		// Interface names may already belong to a reinserted device.
+		return iface_config_remove(name, phydev ? old_config : null);
 	}
 
 	try {

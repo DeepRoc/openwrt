@@ -1406,9 +1406,15 @@ start_service() {
 	fi
 }
 
+dnsmasq_reload() {
+	start_service "$@"
+	# Signal the current instance before procd can replace it. The subshell
+	# preserves the pending service definition built by start_service.
+	(procd_send_signal dnsmasq "$@")
+}
+
 reload_service() {
-	rc_procd start_service "$@"
-	procd_send_signal dnsmasq "$@"
+	rc_procd dnsmasq_reload "$@"
 }
 
 stop_service() {
