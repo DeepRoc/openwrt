@@ -31,7 +31,7 @@ define KernelPackage/dma-buf
   SUBMENU:=$(OTHER_MENU)
   TITLE:=DMA shared buffer support
   HIDDEN:=1
-  KCONFIG:=CONFIG_DMA_SHARED_BUFFER
+  KCONFIG:=CONFIG_DMA_SHARED_BUFFER=m
   ifeq ($(strip $(CONFIG_EXTERNAL_KERNEL_TREE)),"")
     ifeq ($(strip $(CONFIG_KERNEL_GIT_CLONE_URI)),"")
       FILES:=$(LINUX_DIR)/drivers/dma-buf/dma-shared-buffer.ko

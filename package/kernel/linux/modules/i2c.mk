@@ -436,41 +436,41 @@ endef
 
 $(eval $(call KernelPackage,i2c-tiny-usb))
 
-I2C_MAX96724_MODULES:= \
+I2C_MAXIM_SERDES_MODULES:= \
   CONFIG_VIDEO_MAXIM_SERDES:drivers/media/i2c/maxim-serdes/max-serdes \
   CONFIG_VIDEO_MAX96717:drivers/media/i2c/maxim-serdes/max96717 \
   CONFIG_VIDEO_MAX96724:drivers/media/i2c/maxim-serdes/max96724
 
-define KernelPackage/i2c-max96724
-  $(call i2c_defaults,$(I2C_MAX96724_MODULES),51)
-  TITLE:=MAX96724 GMSL2 deserializer
+define KernelPackage/i2c-maxim-serdes
+  $(call i2c_defaults,$(I2C_MAXIM_SERDES_MODULES),51)
+  TITLE:=MAXIM GMSL2 serializers and deserlializers
   DEPENDS:=+kmod-i2c-core +kmod-i2c-atr +kmod-i2c-mux
 endef
 
-define KernelPackage/i2c-max96724/description
- Kernel modules MAX96724 GMSL2 Deserializer
+define KernelPackage/i2c-maxim-serdes/description
+ Kernel modules MAXIM MAXIM_SERDES serializers and deserializers
 endef
 
-$(eval $(call KernelPackage,i2c-max96724))
+$(eval $(call KernelPackage,i2c-maxim-serdes))
 
-I2C_OX05B1S_MODULES:= \
-  CONFIG_VIDEO_OX05B1S:drivers/media/i2c/ox05b1s/ox05b1s
+I2C_ECON_CAM31_MODULES:= \
+  CONFIG_VIDEO_ECON_CAM31:drivers/media/i2c/econ-cam31
 
-define KernelPackage/i2c-ox05b1s
-  $(call i2c_defaults,$(I2C_OX05B1S_MODULES),52)
-  TITLE:=Camera interface to Omnivision OX05B1S CCD with OAX4000 ISP
-  DEPENDS:=+kmod-i2c-core +kmod-i2c-mux
-endef
-
-$(eval $(call KernelPackage,i2c-ox05b1s))
-
-I2C_ISX031_MODULES:= \
-  CONFIG_VIDEO_ISX031:drivers/media/i2c/isx031
-
-define KernelPackage/i2c-isx031
-  $(call i2c_defaults,$(I2C_ISX031_MODULES),52)
-  TITLE:=Camera interface to Sony ISX031 CCD
+define KernelPackage/i2c-econ-cam31
+  $(call i2c_defaults,$(I2C_ECON_CAM31_MODULES),52)
+  TITLE:=Interface to e-Con CAM31 GMSL2 camera
   DEPENDS:=+kmod-i2c-core
 endef
 
-$(eval $(call KernelPackage,i2c-isx031))
+$(eval $(call KernelPackage,i2c-econ-cam31))
+
+I2C_ECON_CAM57_MODULES:= \
+  CONFIG_VIDEO_ECON_CAM57:drivers/media/i2c/econ-cam57
+
+define KernelPackage/i2c-econ-cam57
+  $(call i2c_defaults,$(I2C_ECON_CAM57_MODULES),52)
+  TITLE:=Interface to e-Con CAM57 GMSL2 camera
+  DEPENDS:=+kmod-i2c-core +kmod-i2c-mux
+endef
+
+$(eval $(call KernelPackage,i2c-econ-cam57))

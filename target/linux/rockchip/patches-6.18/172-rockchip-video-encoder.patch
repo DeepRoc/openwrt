@@ -1,45 +1,25 @@
-Index: linux-6.18.44/drivers/iommu/rockchip-iommu.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/Kconfig
 ===================================================================
---- linux-6.18.44.orig/drivers/iommu/rockchip-iommu.c
-+++ linux-6.18.44/drivers/iommu/rockchip-iommu.c
-@@ -27,6 +27,7 @@
- #include <linux/spinlock.h>
- #include <linux/string_choices.h>
- 
-+#include "dma-iommu.h"
- #include "iommu-pages.h"
- 
- /** MMU register offsets */
-@@ -1172,6 +1173,7 @@ static const struct iommu_ops rk_iommu_o
- 	.probe_device = rk_iommu_probe_device,
- 	.release_device = rk_iommu_release_device,
- 	.device_group = generic_single_device_group,
-+	.get_resv_regions = iommu_dma_get_resv_regions,
- 	.of_xlate = rk_iommu_of_xlate,
- 	.default_domain_ops = &(const struct iommu_domain_ops) {
- 		.attach_dev	= rk_iommu_attach_device,
-Index: linux-6.18.44/drivers/media/platform/rockchip/Kconfig
-===================================================================
---- linux-6.18.44.orig/drivers/media/platform/rockchip/Kconfig
-+++ linux-6.18.44/drivers/media/platform/rockchip/Kconfig
-@@ -5,3 +5,4 @@ comment "Rockchip media platform drivers
- source "drivers/media/platform/rockchip/rga/Kconfig"
+--- linux-6.18.55.orig/drivers/media/platform/rockchip/Kconfig
++++ linux-6.18.55/drivers/media/platform/rockchip/Kconfig
+@@ -6,3 +6,4 @@ source "drivers/media/platform/rockchip/
+ source "drivers/media/platform/rockchip/rkcif/Kconfig"
  source "drivers/media/platform/rockchip/rkisp1/Kconfig"
  source "drivers/media/platform/rockchip/rkvdec/Kconfig"
 +source "drivers/media/platform/rockchip/rkvenc/Kconfig"
-Index: linux-6.18.44/drivers/media/platform/rockchip/Makefile
+Index: linux-6.18.55/drivers/media/platform/rockchip/Makefile
 ===================================================================
---- linux-6.18.44.orig/drivers/media/platform/rockchip/Makefile
-+++ linux-6.18.44/drivers/media/platform/rockchip/Makefile
-@@ -2,3 +2,4 @@
- obj-y += rga/
+--- linux-6.18.55.orig/drivers/media/platform/rockchip/Makefile
++++ linux-6.18.55/drivers/media/platform/rockchip/Makefile
+@@ -3,3 +3,4 @@ obj-y += rga/
+ obj-y += rkcif/
  obj-y += rkisp1/
  obj-y += rkvdec/
 +obj-y += rkvenc/
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/Kconfig
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Kconfig
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/Kconfig
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Kconfig
 @@ -0,0 +1,17 @@
 +config VIDEO_ROCKCHIP_RKVENC
 +	tristate "Rockchip RKVENC (VEPU580) encoder driver"
@@ -58,17 +38,17 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/Kconfig
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called rkvenc.
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/Makefile
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Makefile
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/Makefile
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Makefile
 @@ -0,0 +1,2 @@
 +obj-$(CONFIG_VIDEO_ROCKCHIP_RKVENC) += rkvenc.o
 +rkvenc-objs := rkvenc_drv.o rkvenc_hw.o rkvenc_service.o rkvenc_task.o rkvenc_iommu.o
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
 @@ -0,0 +1,481 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -551,10 +531,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
 +MODULE_LICENSE("Dual MIT/GPL");
 +MODULE_AUTHOR("Rockchip Electronics Co., Ltd.");
 +MODULE_IMPORT_NS("DMA_BUF");
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
 @@ -0,0 +1,888 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -1444,10 +1424,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
 +	pm_runtime_disable(enc->dev);
 +	return 0;
 +}
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
 @@ -0,0 +1,881 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
@@ -2330,10 +2310,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
 +extern const struct rkvenc_trans_info trans_rkvenc_v2[];
 +
 +#endif /* __RKVENC_HW_H__ */
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 @@ -0,0 +1,463 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -2798,10 +2778,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 +
 +	return 0;
 +}
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
 @@ -0,0 +1,1206 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -4009,10 +3989,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
 +
 +	return 0;
 +}
-Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
 @@ -0,0 +1,300 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -4314,10 +4294,10 @@ Index: linux-6.18.44/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
 +
 +	kthread_queue_work(&mpp->queue->worker, &mpp->work);
 +}
-Index: linux-6.18.44/include/uapi/linux/rkvenc.h
+Index: linux-6.18.55/include/uapi/linux/rkvenc.h
 ===================================================================
 --- /dev/null
-+++ linux-6.18.44/include/uapi/linux/rkvenc.h
++++ linux-6.18.55/include/uapi/linux/rkvenc.h
 @@ -0,0 +1,84 @@
 +/* SPDX-License-Identifier: ((GPL-2.0+ WITH Linux-syscall-note) OR MIT) */
 +/*
@@ -4403,11 +4383,11 @@ Index: linux-6.18.44/include/uapi/linux/rkvenc.h
 +};
 +
 +#endif /* _UAPI_RKVENC_H */
-Index: linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+Index: linux-6.18.55/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
 ===================================================================
---- linux-6.18.44.orig/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-+++ linux-6.18.44/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-@@ -1461,6 +1461,86 @@
+--- linux-6.18.55.orig/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
++++ linux-6.18.55/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+@@ -1417,6 +1417,86 @@
  		#iommu-cells = <0>;
  	};
  

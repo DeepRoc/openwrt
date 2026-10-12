@@ -40,10 +40,10 @@ index 57cdd8dc96f6..01a299c8eefe 100644
  obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
 diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
 new file mode 100644
-index 000000000000..c04ab0438d66
+index 000000000000..bb3658b4a19b
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam31.c
-@@ -0,0 +1,1682 @@
+@@ -0,0 +1,1685 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM31 containing Sony isx031 sensor.
@@ -1482,21 +1482,25 @@ index 000000000000..c04ab0438d66
 +		ret = cam31_mcu_cmd(cam->client, CMD_ID_GET_STREAM_INFO, tx_payload, 2, rx_buf, sizeof(rx_buf));
 +		if (ret)
 +			break;
++                struct cam31_mode *mode = &cam->modes[index];
 +
-+		cam->modes[index].fourcc = (rx_buf[0] << 24) | (rx_buf[1] << 16) | (rx_buf[2] << 8) | rx_buf[3];
-+		cam->modes[index].code = cam31_fourcc_to_mbus(cam->modes[index].fourcc);
-+		cam->modes[index].width = (rx_buf[4] << 8) | rx_buf[5];
-+		cam->modes[index].height = (rx_buf[6] << 8) | rx_buf[7];
++		mode->fourcc = (rx_buf[0] << 24) | (rx_buf[1] << 16) | (rx_buf[2] << 8) | rx_buf[3];
++		mode->code = cam31_fourcc_to_mbus(mode->fourcc);
++		mode->width = (rx_buf[4] << 8) | rx_buf[5];
++		mode->height = (rx_buf[6] << 8) | rx_buf[7];
 +
 +		if (rx_buf[8] == 0x01) {
-+			cam->modes[index].fps_num = (rx_buf[9] << 8) | rx_buf[10];
-+			cam->modes[index].fps_denom = (rx_buf[11] << 8) | rx_buf[12];
++			mode->fps_num = (rx_buf[9] << 8) | rx_buf[10];
++			mode->fps_denom = (rx_buf[11] << 8) | rx_buf[12];
 +		}
++
++                if (mode->width == 1920 && mode->height == 1080 && mode->fps_num == 30)
++                    cam->current_mode = index;
 +
 +#ifdef DEBUG
 +		dev_info(&cam->client->dev, "mode[%d]: %dx%d FOURCC: 0x%08x @ %d/%d FPS\n",
-+			 index, cam->modes[index].width, cam->modes[index].height,
-+			 cam->modes[index].fourcc, cam->modes[index].fps_num, cam->modes[index].fps_denom);
++			 index, mode->width, mode->height,
++			 mode->fourcc, mode->fps_num, mode->fps_denom);
 +#endif
 +		index++;
 +	}
@@ -1640,7 +1644,6 @@ index 000000000000..c04ab0438d66
 +		return -ENOMEM;
 +
 +	cam->client = client;
-+	cam->current_mode = 0;
 +	mutex_init(&cam->lock);
 +
 +	INIT_DELAYED_WORK(&cam->init_work, cam31_init_work);
