@@ -349,7 +349,7 @@
 
 				altmode@0 {
 					reg = <0>;
-					svid = <0xff01>;
+					svid = /bits/ 16 <0xff01>;
 					vdo = <0xffffffff>;
 				};
 			};
