@@ -70,6 +70,21 @@ endef
 
 $(eval $(call KernelPackage,hid-alps))
 
+define KernelPackage/hid-multitouch
+  SUBMENU:=$(INPUT_MODULES_MENU)
+  TITLE:=Multi-touch input panel support
+  DEPENDS:=+kmod-hid
+  KCONFIG:=CONFIG_HID_MULTITOUCH
+  FILES:=$(LINUX_DIR)/drivers/hid/hid-multitouch.ko
+  AUTOLOAD:=$(call AutoProbe,hid-multitouch)
+endef
+
+define KernelPackage/hid-multitouch/description
+ Kernel module support HID multitouch panels
+endef
+
+$(eval $(call KernelPackage,hid-multitouch))
+
 define KernelPackage/input-adc-keys
   SUBMENU:=$(INPUT_MODULES_MENU)
   TITLE:=ADC Ladder Buttons support
@@ -221,9 +236,6 @@ endef
 define KernelPackage/input-matrixkmap/description
  Kernel module support for input matrix devices
 endef
-
-$(eval $(call KernelPackage,input-matrixkmap))
-
 
 define KernelPackage/input-touchscreen-ads7846
   SUBMENU:=$(INPUT_MODULES_MENU)
