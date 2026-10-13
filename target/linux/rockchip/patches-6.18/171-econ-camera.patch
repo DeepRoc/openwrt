@@ -40,7 +40,7 @@ index 57cdd8dc96f6..01a299c8eefe 100644
  obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
 diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
 new file mode 100644
-index 000000000000..bb3658b4a19b
+index 000000000000..b07ebe98d6b9
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam31.c
 @@ -0,0 +1,1685 @@
@@ -106,7 +106,7 @@ index 000000000000..bb3658b4a19b
 +
 +#define CAM31_INIT_GPIOS
 +
-+#define DEBUG
++// #define DEBUG
 +
 +/* e-Con Proprietary Host Command Set */
 +enum cam31_mcu_cmd_id {

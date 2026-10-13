@@ -1,0 +1,27 @@
+#!/bin/sh
+
+fatal() {
+    echo $* 1>&2
+    exit 1
+}
+
+sdk=SDK1
+dir=/tmp/toolchain_$$
+tc_dir=$dir/$sdk/usr
+target=target-aarch64_generic_glibc
+toolchain=toolchain-aarch64_generic_gcc-14.4.0_glibc
+
+[ -d staging_dir/$target -a -d staging_dir/$toolchain ] || fatal "toolchain not available"
+
+rm -rf $dir
+mkdir -p $tc_dir
+
+cp -a staging_dir/$target/usr/lib $tc_dir
+cp -a staging_dir/$target/usr/include $tc_dir
+cp -a staging_dir/$toolchain/lib $tc_dir
+cp -a staging_dir/$toolchain/include $tc_dir
+cp -a private-key.pem $tc_dir/..
+
+find $tc_dir \( -name '*.a' -o -name '*.la' \) -print | xargs rm
+tar czf /tmp/openwrt_$sdk.tar.gz -C $dir $sdk
+rm -rf $dir
