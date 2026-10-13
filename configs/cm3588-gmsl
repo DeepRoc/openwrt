@@ -3140,7 +3140,7 @@ CONFIG_PACKAGE_libiwinfo-data=y
 # CONFIG_PACKAGE_p54-pci-firmware is not set
 # CONFIG_PACKAGE_p54-spi-firmware is not set
 # CONFIG_PACKAGE_p54-usb-firmware is not set
-# CONFIG_PACKAGE_panthor-firmware is not set
+CONFIG_PACKAGE_panthor-firmware=y
 # CONFIG_PACKAGE_r8152-firmware is not set
 CONFIG_PACKAGE_r8169-firmware=y
 # CONFIG_PACKAGE_radeon-firmware is not set
@@ -4272,19 +4272,24 @@ CONFIG_PACKAGE_kmod-sound-core=y
 #
 # CONFIG_PACKAGE_kmod-backlight-gpio is not set
 # CONFIG_PACKAGE_kmod-backlight-pwm is not set
+CONFIG_PACKAGE_kmod-drm=y
 # CONFIG_PACKAGE_kmod-drm-analogix-dp is not set
 # CONFIG_PACKAGE_kmod-drm-dw-dp is not set
 # CONFIG_PACKAGE_kmod-drm-dw-hdmi is not set
 # CONFIG_PACKAGE_kmod-drm-dw-hdmi-qp is not set
 # CONFIG_PACKAGE_kmod-drm-dw-mipi-dsi is not set
 # CONFIG_PACKAGE_kmod-drm-dw-mipi-dsi2 is not set
-# CONFIG_PACKAGE_kmod-drm-kms-helper is not set
+CONFIG_PACKAGE_kmod-drm-exec=y
+CONFIG_PACKAGE_kmod-drm-gpuvm=y
+CONFIG_PACKAGE_kmod-drm-kms-helper=y
 # CONFIG_PACKAGE_kmod-drm-panel-mipi-dbi is not set
 # CONFIG_PACKAGE_kmod-drm-panel-simple is not set
 # CONFIG_PACKAGE_kmod-drm-panel-tc358762 is not set
-# CONFIG_PACKAGE_kmod-drm-panthor is not set
+CONFIG_PACKAGE_kmod-drm-panthor=y
 # CONFIG_PACKAGE_kmod-drm-rockchip is not set
 # CONFIG_PACKAGE_kmod-drm-rocket is not set
+CONFIG_PACKAGE_kmod-drm-sched=y
+CONFIG_PACKAGE_kmod-drm-shmem-helper=y
 # CONFIG_PACKAGE_kmod-drm-ttm is not set
 # CONFIG_PACKAGE_kmod-media-controller is not set
 # CONFIG_PACKAGE_kmod-video-core is not set
@@ -5662,8 +5667,8 @@ CONFIG_PACKAGE_libgraphene=m
 # CONFIG_PACKAGE_libmesa-lima is not set
 # CONFIG_PACKAGE_libmesa-llvmpipe is not set
 # CONFIG_PACKAGE_libmesa-nouveau is not set
-# CONFIG_PACKAGE_libmesa-panfrost is not set
-CONFIG_PACKAGE_libmesa-softpipe=y
+CONFIG_PACKAGE_libmesa-panfrost=y
+CONFIG_PACKAGE_libmesa-softpipe=m
 # CONFIG_PACKAGE_libmesa-tegra is not set
 # CONFIG_PACKAGE_libmesa-virgl is not set
 # CONFIG_PACKAGE_libmesa-zink is not set
@@ -8259,7 +8264,7 @@ CONFIG_PACKAGE_picocom=y
 # Video
 #
 # CONFIG_PACKAGE_kmscube is not set
-# CONFIG_PACKAGE_libdrm-tests is not set
+CONFIG_PACKAGE_libdrm-tests=y
 # CONFIG_PACKAGE_libgtk-demos is not set
 # CONFIG_PACKAGE_libgtk-utils is not set
 # CONFIG_PACKAGE_libsdl3-tests is not set
@@ -8599,7 +8604,7 @@ CONFIG_PACKAGE_jshn=y
 # CONFIG_PACKAGE_lcdproc-drivers is not set
 # CONFIG_PACKAGE_lcdproc-server is not set
 # CONFIG_PACKAGE_ldconfig is not set
-# CONFIG_PACKAGE_ldd is not set
+CONFIG_PACKAGE_ldd=y
 # CONFIG_PACKAGE_less is not set
 # CONFIG_PACKAGE_libflashrom is not set
 CONFIG_PACKAGE_libjson-script=y
