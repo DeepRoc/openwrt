@@ -856,6 +856,7 @@
 	pinctrl-0 = <&spi0m2_cs0 &spi0m2_pins>;
 	power_switch: switch@0 {
 		compatible = "nxp,mc33xs2410";
+                nxp,ssc-disable-mask = <0x88>;  // Disable SSC on port#3 connected to speaker
 		reg = <0x0>; /* SPI Chip Select 0 */
 		spi-max-frequency = <10000000>; /* 10 MHz max SPI clock */
 		spi-cpha; /* SPI Mode 1 (CPOL=0, CPHA=1) */

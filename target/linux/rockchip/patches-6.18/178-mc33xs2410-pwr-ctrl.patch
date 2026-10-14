@@ -1,0 +1,47 @@
+diff --git a/drivers/pwm/pwm-mc33xs2410.c b/drivers/pwm/pwm-mc33xs2410.c
+index 6d99e3ff7239..9916e59ff7a2 100644
+--- a/drivers/pwm/pwm-mc33xs2410.c
++++ b/drivers/pwm/pwm-mc33xs2410.c
+@@ -44,6 +44,10 @@
+ /* chan in { 1 ... 4 } */
+ #define MC33XS2410_PWM_CTRL3_EN(chan)		BIT(4 + (chan) - 1)
+ 
++#define MC33XS2410_SSC_CTRL			0x34
++#define MC33XS2410_SSC_CTRL_D(chan)		BIT(4 + (chan) - 1)
++#define MC33XS2410_SSC_CTRL_R(chan)		BIT((chan) - 1)
++
+ /* chan in { 1 ... 4 } */
+ #define MC33XS2410_PWM_FREQ(chan)		(0x08 + (chan) - 1)
+ #define MC33XS2410_PWM_FREQ_STEP		GENMASK(7, 6)
+@@ -322,6 +326,20 @@ static int mc33xs2410_reset(struct device *dev)
+ 	return 0;
+ }
+ 
++static int mc33xs2410_configure_ssc(struct spi_device *spi)
++{
++	struct device *dev = &spi->dev;
++	u32 mask = 0;
++
++	if (of_property_read_u32(dev->of_node, "nxp,ssc-disable-mask", &mask) || mask == 0)
++		return 0; /* Property not specified, leave defaults */
++
++	int ret = mc33xs2410_write_reg(spi, MC33XS2410_SSC_CTRL, (u8)mask);
++	if (ret < 0)
++		return dev_err_probe(dev, ret, "Failed to write SSC_CTRL register\n");
++
++	return 0;
++}
+ static int mc33xs2410_probe(struct spi_device *spi)
+ {
+ 	struct device *dev = &spi->dev;
+@@ -369,6 +387,10 @@ static int mc33xs2410_probe(struct spi_device *spi)
+ 		return dev_err_probe(dev, ret,
+ 				     "Failed to transition to normal mode\n");
+ 
++	ret = mc33xs2410_configure_ssc(spi);
++	if (ret < 0)
++		return ret;
++
+ 	ret = devm_pwmchip_add(dev, chip);
+ 	if (ret < 0)
+ 		return dev_err_probe(dev, ret, "Failed to add pwm chip\n");
