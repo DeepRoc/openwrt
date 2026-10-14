@@ -1,8 +1,22 @@
 diff --git a/drivers/pwm/pwm-mc33xs2410.c b/drivers/pwm/pwm-mc33xs2410.c
-index 6d99e3ff7239..9916e59ff7a2 100644
+index 6d99e3ff7239..1a0bf6ec799e 100644
 --- a/drivers/pwm/pwm-mc33xs2410.c
 +++ b/drivers/pwm/pwm-mc33xs2410.c
-@@ -44,6 +44,10 @@
+@@ -33,8 +33,11 @@
+ #include <linux/spi/spi.h>
+ 
+ #define MC33XS2410_GLB_CTRL			0x00
+-#define MC33XS2410_GLB_CTRL_MODE		GENMASK(7, 6)
+-#define MC33XS2410_GLB_CTRL_MODE_NORMAL		FIELD_PREP(MC33XS2410_GLB_CTRL_MODE, 1)
++#define MC33XS2410_GLB_CTRL_MODE		GENMASK(7, 5)
++#define MC33XS2410_GLB_CTRL_MODE_NORMAL		FIELD_PREP(MC33XS2410_GLB_CTRL_MODE, 2)
++
++#define MC33XS2410_OUT_CTRL			0x02
++#define MC33XS2410_OUT_ENA(chan)		BIT((chan) - 1)
+ 
+ #define MC33XS2410_PWM_CTRL1			0x05
+ /* chan in { 1 ... 4 } */
+@@ -44,6 +47,10 @@
  /* chan in { 1 ... 4 } */
  #define MC33XS2410_PWM_CTRL3_EN(chan)		BIT(4 + (chan) - 1)
  
@@ -13,7 +27,51 @@ index 6d99e3ff7239..9916e59ff7a2 100644
  /* chan in { 1 ... 4 } */
  #define MC33XS2410_PWM_FREQ(chan)		(0x08 + (chan) - 1)
  #define MC33XS2410_PWM_FREQ_STEP		GENMASK(7, 6)
-@@ -322,6 +326,20 @@ static int mc33xs2410_reset(struct device *dev)
+@@ -222,23 +229,24 @@ static int mc33xs2410_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+ 				const struct pwm_state *state)
+ {
+ 	struct spi_device *spi = pwmchip_get_drvdata(chip);
+-	u8 reg[4] = {
++	u8 reg[5] = {
+ 			MC33XS2410_PWM_FREQ(pwm->hwpwm + 1),
+ 			MC33XS2410_PWM_DC(pwm->hwpwm + 1),
+ 			MC33XS2410_PWM_CTRL1,
+-			MC33XS2410_PWM_CTRL3
++			MC33XS2410_PWM_CTRL3,
++                        MC33XS2410_OUT_CTRL
+ 		    };
+ 	u64 period, duty_cycle;
+ 	int ret, rel_dc;
+-	u16 rd_val[2];
+-	u8 wr_val[4];
++	u16 rd_val[3];
++	u8 wr_val[5];
+ 	u8 mask;
+ 
+ 	period = min(state->period, MC33XS2410_PWM_MAX_PERIOD(0));
+ 	if (period < MC33XS2410_PWM_MIN_PERIOD)
+ 		return -EINVAL;
+ 
+-	ret = mc33xs2410_read_regs(spi, &reg[2], MC33XS2410_FRAME_IN_DATA_RD, rd_val, 2);
++	ret = mc33xs2410_read_regs(spi, &reg[2], MC33XS2410_FRAME_IN_DATA_RD, rd_val, 3);
+ 	if (ret < 0)
+ 		return ret;
+ 
+@@ -272,7 +280,12 @@ static int mc33xs2410_pwm_apply(struct pwm_chip *chip, struct pwm_device *pwm,
+ 	else
+ 		wr_val[3] = rd_val[1] & ~mask;
+ 
+-	return mc33xs2410_write_regs(spi, reg, wr_val, 4);
++        if (state->enabled)
++		wr_val[4] = rd_val[2] | MC33XS2410_OUT_ENA(pwm->hwpwm + 1);
++	else
++		wr_val[4] = rd_val[2] & !MC33XS2410_OUT_ENA(pwm->hwpwm + 1);
++
++	return mc33xs2410_write_regs(spi, reg, wr_val, 5);
+ }
+ 
+ static int mc33xs2410_pwm_get_state(struct pwm_chip *chip,
+@@ -322,6 +335,20 @@ static int mc33xs2410_reset(struct device *dev)
  	return 0;
  }
  
@@ -34,7 +92,7 @@ index 6d99e3ff7239..9916e59ff7a2 100644
  static int mc33xs2410_probe(struct spi_device *spi)
  {
  	struct device *dev = &spi->dev;
-@@ -369,6 +387,10 @@ static int mc33xs2410_probe(struct spi_device *spi)
+@@ -369,6 +396,10 @@ static int mc33xs2410_probe(struct spi_device *spi)
  		return dev_err_probe(dev, ret,
  				     "Failed to transition to normal mode\n");
  
