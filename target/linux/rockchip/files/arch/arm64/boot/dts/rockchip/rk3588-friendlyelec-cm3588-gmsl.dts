@@ -211,6 +211,32 @@
 		regulator-max-microvolt = <12000000>;
 		regulator-always-on;
 	};
+
+	rknn_opp_table: npu-opp-table {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		opp-200000000 {
+			opp-hz = /bits/ 64 <200000000>;
+			opp-microvolt = <750000>;
+		};
+		opp-400000000 {
+			opp-hz = /bits/ 64 <400000000>;
+			opp-microvolt = <750000>;
+		};
+		opp-600000000 {
+			opp-hz = /bits/ 64 <600000000>;
+			opp-microvolt = <800000>;
+		};
+		opp-800000000 {
+			opp-hz = /bits/ 64 <800000000>;
+			opp-microvolt = <850000>;
+		};
+		opp-1000000000 {
+			opp-hz = /bits/ 64 <1000000000>;
+			opp-microvolt = <875000>;
+		};
+	};
 };
 
 /* vcc_4v0_sys powers the RK806 and RK860's */
@@ -1085,5 +1111,35 @@
 };
 
 &vdec1_mmu {
+	status = "okay";
+};
+
+&rknn_core_0 {
+	operating-points-v2 = <&rknn_opp_table>;
+	npu-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_mmu_0 {
+	status = "okay";
+};
+
+&rknn_core_1 {
+	operating-points-v2 = <&rknn_opp_table>;
+	npu-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_mmu_1 {
+	status = "okay";
+};
+
+&rknn_core_2 {
+	operating-points-v2 = <&rknn_opp_table>;
+	npu-supply = <&vdd_npu_s0>;
+	status = "okay";
+};
+
+&rknn_mmu_2 {
 	status = "okay";
 };
