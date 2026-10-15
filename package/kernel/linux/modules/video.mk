@@ -1691,10 +1691,25 @@ endef
 
 $(eval $(call KernelPackage,video-imx415))
 
-
 #
 # Video Processing
 #
+
+define KernelPackage/video-isp
+  SUBMENU:=$(VIDEO_MENU)
+  DEPENDS:=
+  TITLE:=Generic ISP Support
+  KCONFIG:= CONFIG_V4L2_ISP
+  FILES:=$(LINUX_DIR)/drivers/media/v4l2-core/v4l2-isp.ko
+  AUTOLOAD:=$(call AutoProbe,v4l2-isp)
+  $(call AddDepends/video)
+endef
+
+define KernelPackage/video-isp/description
+  Generic ISP support for Rockchip ISP1 and ISP2 drivers
+endef
+
+$(eval $(call KernelPackage,video-isp))
 
 define KernelPackage/video-mem2mem
   SUBMENU:=$(VIDEO_MENU)

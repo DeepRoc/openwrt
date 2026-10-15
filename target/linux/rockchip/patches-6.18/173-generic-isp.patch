@@ -728,7 +728,7 @@ Index: linux-6.18.55/drivers/media/v4l2-core/v4l2-isp.c
 ===================================================================
 --- /dev/null
 +++ linux-6.18.55/drivers/media/v4l2-core/v4l2-isp.c
-@@ -0,0 +1,128 @@
+@@ -0,0 +1,131 @@
 +// SPDX-License-Identifier: GPL-2.0-or-later
 +/*
 + * Video4Linux2 generic ISP parameters and statistics support
@@ -743,6 +743,9 @@ Index: linux-6.18.55/drivers/media/v4l2-core/v4l2-isp.c
 +#include <linux/device.h>
 +
 +#include <media/videobuf2-core.h>
++
++MODULE_AUTHOR("Jacopo Mondi <jacopo.mondi@ideasonboard.com>");
++MODULE_LICENSE("GPL");
 +
 +int v4l2_isp_params_validate_buffer_size(struct device *dev,
 +					 struct vb2_buffer *vb,

@@ -107,6 +107,43 @@ endef
 
 $(eval $(call KernelPackage,video-rockchip-vdec))
 
+define KernelPackage/video-rockchip-venc
+  TITLE:=Rockchip video encoder support
+  DEPENDS:=@TARGET_rockchip +kmod-video-dma-contig
+  KCONFIG:=CONFIG_VIDEO_ROCKCHIP_RKVENC
+  FILES:=$(LINUX_DIR)/drivers/media/platform/rockchip/rkvenc/rkvenc.ko
+  AUTOLOAD:=$(call AutoProbe,rkvenc)
+  $(call AddDepends/video)
+endef
+
+define KernelPackage/video-rockchip-venc/description
+  Support for the Rockchip VEPU580 hardware video encoder found on
+  RK3588 SoCs. This encoder supports H.264, H.265/HEVC, and JPEG
+  encoding at up to 8K resolution.
+
+  This driver provides the /dev/mpp_service character device interface
+  used by the Rockchip MPP userspace library for hardware-accelerated
+  video encoding.
+endef
+
+$(eval $(call KernelPackage,video-rockchip-venc))
+
+define KernelPackage/video-rockchip-isp2
+  TITLE:=Rockchip ISP support
+  DEPENDS:=@TARGET_rockchip +kmod-video-mem2mem +kmod-video-dma-contig \
+	+kmod-video-vmalloc +kmod-video-async +kmod-video-isp
+  KCONFIG:=CONFIG_VIDEO_ROCKCHIP_ISP2
+  FILES:=$(LINUX_DIR)/drivers/media/platform/rockchip/rkisp2/rockchip-isp2.ko
+  AUTOLOAD:=$(call AutoProbe,rockchip-isp2)
+  $(call AddDepends/video)
+endef
+
+define KernelPackage/video-rockchip-isp2/description
+  Enable this to support the Image Signal Processing (ISP) module
+  present in RK3588 SoCs.
+endef
+
+$(eval $(call KernelPackage,video-rockchip-isp2))
 
 define KernelPackage/video-rockchip-rga
   TITLE:=Rockchip RGA 2D graphics acceleration

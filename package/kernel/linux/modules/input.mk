@@ -237,6 +237,8 @@ define KernelPackage/input-matrixkmap/description
  Kernel module support for input matrix devices
 endef
 
+$(eval $(call KernelPackage,input-matrixkmap))
+
 define KernelPackage/input-touchscreen-ads7846
   SUBMENU:=$(INPUT_MODULES_MENU)
   TITLE:=ADS7846/TSC2046/AD7873 and AD(S)7843 based touchscreens

@@ -444,7 +444,8 @@ I2C_MAXIM_SERDES_MODULES:= \
 define KernelPackage/i2c-maxim-serdes
   $(call i2c_defaults,$(I2C_MAXIM_SERDES_MODULES),51)
   TITLE:=MAXIM GMSL2 serializers and deserlializers
-  DEPENDS:=+kmod-i2c-core +kmod-i2c-atr +kmod-i2c-mux
+  DEPENDS:=+kmod-i2c-core +kmod-i2c-atr +kmod-i2c-mux \
+	+kmod-video-core +kmod-video-async +kmod-video-fwnode
 endef
 
 define KernelPackage/i2c-maxim-serdes/description
