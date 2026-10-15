@@ -1,0 +1,183 @@
+Subject: [PATCH] media: rkcif: select the CSI-2 virtual channel for each capture stream
+
+All capture IDs currently select VC0. Pass the upstream frame descriptor
+through the CSI receiver, translate logical stream IDs using the active
+routes, and program RKCIF CTRL0 with the advertised wire VC. This allows
+CAM57 RGB on video4/VC0 and IR on video5/VC1 without renumbering IR to VC0.
+Retain the legacy VC0 fallback when frame descriptors are unsupported.
+
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
+===================================================================
+--- linux-6.18.55.orig/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
+@@ -499,6 +499,10 @@ rkcif_rk3588_mipi_ctrl0(struct rkcif_str
+ 
+ 	switch (active_out_fmt->mipi.type) {
+ 	case RKCIF_MIPI_TYPE_RAW8:
++		if (active_out_fmt->mipi.dt == MIPI_CSI2_DT_YUV422_8B) {
++			ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x4);
++			ctrl0 |= RK3588_MIPI_CTRL0_WRDDR(0x2);
++		}
+ 		break;
+ 	case RKCIF_MIPI_TYPE_RAW10:
+ 		ctrl0 |= RK3588_MIPI_CTRL0_PARSE(0x1);
+@@ -716,6 +720,53 @@ static void rkcif_mipi_queue_buffer(stru
+ 				buffer->buff_addr[RKCIF_PLANE_UV]);
+ }
+ 
++/* Resolve the wire VC independently of the local DMA/stream number. */
++static int rkcif_mipi_get_vc(struct rkcif_stream *stream,
++			   struct v4l2_subdev_state *state, u8 *vc)
++{
++	struct rkcif_interface *interface = stream->interface;
++	struct v4l2_mbus_frame_desc fd = {};
++	struct v4l2_subdev *remote_sd;
++	struct media_pad *remote_pad;
++	u32 sink_pad, sink_stream;
++	unsigned int i;
++	int ret;
++
++	ret = v4l2_subdev_routing_find_opposite_end(&state->routing,
++						    RKCIF_IF_PAD_SRC, stream->id,
++						    &sink_pad, &sink_stream);
++	if (ret)
++		return ret;
++
++	remote_pad = media_pad_remote_pad_first(&interface->pads[sink_pad]);
++	if (!remote_pad)
++		return -ENOLINK;
++
++	remote_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
++	ret = v4l2_subdev_call(remote_sd, pad, get_frame_desc,
++			       remote_pad->index, &fd);
++	if (ret == -ENOIOCTLCMD && !sink_stream) {
++		/* Preserve the legacy VC0 path for sources without descriptors. */
++		*vc = 0;
++		return 0;
++	}
++	if (ret)
++		return ret;
++	if (fd.type != V4L2_MBUS_FRAME_DESC_TYPE_CSI2)
++		return -EINVAL;
++
++	for (i = 0; i < fd.num_entries; i++) {
++		if (fd.entry[i].stream != sink_stream)
++			continue;
++		if (fd.entry[i].bus.csi2.vc > 3)
++			return -EINVAL;
++		*vc = fd.entry[i].bus.csi2.vc;
++		return 0;
++	}
++
++	return -EPIPE;
++}
++
+ static int rkcif_mipi_start_streaming(struct rkcif_stream *stream)
+ {
+ 	struct rkcif_interface *interface = stream->interface;
+@@ -724,6 +775,7 @@ static int rkcif_mipi_start_streaming(st
+ 	struct v4l2_subdev_state *state;
+ 	u32 ctrl0 = 0, ctrl1 = 0, int_temp = 0, int_mask = 0, vlw = 0;
+ 	u16 height, width;
++	u8 vc;
+ 	int ret = -EINVAL;
+ 
+ 	state = v4l2_subdev_lock_and_get_active_state(&interface->sd);
+@@ -733,6 +785,10 @@ static int rkcif_mipi_start_streaming(st
+ 	if (!active_out_fmt)
+ 		goto out;
+ 
++	ret = rkcif_mipi_get_vc(stream, state, &vc);
++	if (ret)
++		goto out;
++
+ 	height = stream->pix.height;
+ 	width = stream->pix.width;
+ 	vlw = stream->pix.plane_fmt[0].bytesperline;
+@@ -740,6 +796,7 @@ static int rkcif_mipi_start_streaming(st
+ 	match_data = stream->rkcif->match_data->mipi;
+ 	if (match_data->mipi_ctrl0)
+ 		ctrl0 = match_data->mipi_ctrl0(stream, active_out_fmt);
++	ctrl0 |= RKCIF_MIPI_CTRL0_VC_ID(vc);
+ 
+ 	ctrl1 = RKCIF_XY_COORD(width, height);
+ 
+Index: linux-6.18.55/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+===================================================================
+--- linux-6.18.55.orig/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
++++ linux-6.18.55/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+@@ -629,25 +629,63 @@ static int dw_mipi_csi2rx_disable_stream
+ 
+ 	return ret;
+ }
+-
+-static int
+-dw_mipi_csi2rx_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
+-			      struct v4l2_mbus_frame_desc *fd)
++ 
++static int dw_mipi_csi2rx_get_frame_desc(struct v4l2_subdev *sd,
++					 unsigned int pad,
++					 struct v4l2_mbus_frame_desc *fd)
+ {
+-	struct dw_mipi_csi2rx_device *csi2 = to_csi2(sd);
++	struct v4l2_mbus_frame_desc upstream = {};
++	struct v4l2_subdev_state *state;
++	struct v4l2_subdev_route *route;
+ 	struct v4l2_subdev *remote_sd;
+ 	struct media_pad *remote_pad;
++	unsigned int i;
++	int ret;
++
++	if (pad != DW_MIPI_CSI2RX_PAD_SRC)
++		return -EINVAL;
+ 
+-	remote_pad = media_pad_remote_pad_unique(&csi2->pads[DW_MIPI_CSI2RX_PAD_SINK]);
+-	if (IS_ERR(remote_pad)) {
+-		dev_err(csi2->dev, "can't get remote source pad\n");
+-		return PTR_ERR(remote_pad);
++	state = v4l2_subdev_lock_and_get_active_state(sd);
++	remote_pad = media_pad_remote_pad_first(&sd->entity.pads[DW_MIPI_CSI2RX_PAD_SINK]);
++	if (!remote_pad) {
++		ret = -ENOLINK;
++		goto out;
+ 	}
+ 
+ 	remote_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
++	ret = v4l2_subdev_call(remote_sd, pad, get_frame_desc,
++			       remote_pad->index, &upstream);
++	if (ret)
++		goto out;
++
++	fd->type = upstream.type;
++	fd->num_entries = 0;
++	for_each_active_route(&state->routing, route) {
++		if (route->source_pad != pad)
++			continue;
++
++		for (i = 0; i < upstream.num_entries; i++)
++			if (upstream.entry[i].stream == route->sink_stream)
++				break;
++		if (i == upstream.num_entries) {
++			ret = -EPIPE;
++			goto out;
++		}
++		if (fd->num_entries == V4L2_FRAME_DESC_ENTRY_MAX) {
++			ret = -E2BIG;
++			goto out;
++		}
++
++		/* Forward VC/DT unchanged; only the logical stream ID changes. */
++		fd->entry[fd->num_entries] = upstream.entry[i];
++		fd->entry[fd->num_entries].stream = route->source_stream;
++		fd->num_entries++;
++	}
+ 
+-	return v4l2_subdev_call(remote_sd, pad, get_frame_desc,
+-				remote_pad->index, fd);
++	ret = 0;
++out:
++	v4l2_subdev_unlock_state(state);
++	return ret;
+ }
+ 
+ static const struct v4l2_subdev_pad_ops dw_mipi_csi2rx_pad_ops = {
