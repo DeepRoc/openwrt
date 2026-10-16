@@ -1,0 +1,48 @@
+diff --git a/drivers/accel/rocket/rocket_core.c b/drivers/accel/rocket/rocket_core.c
+index b3b2fa9ba645..2f37842f92c4 100644
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -13,11 +13,18 @@
+ 
+ #include "rocket_core.h"
+ #include "rocket_job.h"
++#include <linux/pm_opp.h>
++#include <linux/pm_opp.h>
++#include <linux/pm_opp.h>
+ 
+ int rocket_core_init(struct rocket_core *core)
+ {
+ 	struct device *dev = core->dev;
+ 	struct platform_device *pdev = to_platform_device(dev);
++	const char *reg_names[] = { "npu", NULL };
++	struct dev_pm_opp_config config = {
++		.regulator_names = reg_names,
++	};
+ 	u32 version;
+ 	int err = 0;
+ 
+@@ -83,6 +90,24 @@ int rocket_core_init(struct rocket_core *core)
+ 		return err;
+ 	}
+ 
++	/* Check if the shared OPP table was already initialized by a sibling core */
++	if (core->index == 0) {
++		err = devm_pm_opp_set_config(dev, &config);
++		if (err && err != -ENODEV) {
++			dev_err(dev, "Failed to set primary OPP config: %d\n", err);
++			return err;
++		}
++	}
++
++	/* Attach every core device to the shared Device Tree OPP table */
++	err = devm_pm_opp_of_add_table(dev);
++	if (err && err != -ENODEV) {
++		dev_err(dev, "Failed to add OPP table for %s: %d\n", dev_name(dev), err);
++		return err;
++	} else if (!err) {
++		dev_info(dev, "OPP table registered for %s\n", dev_name(dev));
++	}
++
+ 	version = rocket_pc_readl(core, VERSION);
+ 	version += rocket_pc_readl(core, VERSION_NUM) & 0xffff;
+ 
