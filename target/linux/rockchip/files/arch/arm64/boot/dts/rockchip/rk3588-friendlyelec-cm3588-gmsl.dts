@@ -772,22 +772,6 @@
 	};
 };
 
-&isp0_mmu {
-	status = "okay";
-};
-
-&isp0 {
-	status = "okay";
-};
-
-&isp1_mmu {
-	status = "okay";
-};
-
-&isp1 {
-	status = "okay";
-};
-
 &pcie2x1l0 {
         status = "disabled";
 };
@@ -1114,6 +1098,13 @@
 	status = "okay";
 };
 
+/* Enable Rockchip RGA 2D graphics accelerator */
+
+&rga {
+	status = "okay";
+}
+
+/* Enable Rockchip NPU cores */
 &rknn_core_0 {
 	operating-points-v2 = <&rknn_opp_table>;
 	npu-supply = <&vdd_npu_s0>;
