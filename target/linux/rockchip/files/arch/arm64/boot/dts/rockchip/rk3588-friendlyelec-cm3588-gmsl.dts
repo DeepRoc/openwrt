@@ -1102,7 +1102,7 @@
 
 &rga {
 	status = "okay";
-}
+};
 
 /* Enable Rockchip NPU cores */
 &rknn_core_0 {
