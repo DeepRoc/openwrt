@@ -1,0 +1,900 @@
+Subject: [PATCH] accel/rocket: carry SDK1 v8 lifetime, PM and error fixes
+
+Apply after 180-rocket-pm_opp.patch. Manage IOMMU/buffer lifetimes, shared
+OPP transitions and runtime PM; preserve producer fences and propagate
+failed jobs to dependent work and CPU buffer preparation. Removes the
+repeated pm_opp includes from the preceding downstream patch.
+
+This is the tested essential driver, without fault-injection hooks.
+Real electrical/IRQ/IOMMU hang recovery remains outside the validation.
+
+--- a/drivers/accel/rocket/rocket_core.c
++++ b/drivers/accel/rocket/rocket_core.c
+@@ -12,18 +12,20 @@
+ #include <linux/reset.h>
+ 
+ #include "rocket_core.h"
++#include "rocket_device.h"
+ #include "rocket_job.h"
+ #include <linux/pm_opp.h>
+-#include <linux/pm_opp.h>
+-#include <linux/pm_opp.h>
++#include <linux/regulator/consumer.h>
+ 
+ int rocket_core_init(struct rocket_core *core)
+ {
+ 	struct device *dev = core->dev;
+ 	struct platform_device *pdev = to_platform_device(dev);
+ 	const char *reg_names[] = { "npu", NULL };
++	const char *clk_names[] = { "npu", NULL };
+ 	struct dev_pm_opp_config config = {
+ 		.regulator_names = reg_names,
++		.clk_names = clk_names,
+ 	};
+ 	u32 version;
+ 	int err = 0;
+@@ -34,6 +36,11 @@
+ 						    core->resets);
+ 	if (err)
+ 		return dev_err_probe(dev, err, "failed to get resets for core %d\n", core->index);
++
++	core->clks[0].id = "aclk";
++	core->clks[1].id = "hclk";
++	core->clks[ROCKET_NPU_CLK].id = "npu";
++	core->clks[3].id = "pclk";
+ 
+ 	err = devm_clk_bulk_get(dev, ARRAY_SIZE(core->clks), core->clks);
+ 	if (err)
+@@ -63,6 +70,54 @@
+ 	if (err)
+ 		return err;
+ 
++	/* Check if the shared OPP table was already initialized by a sibling core */
++	if (core->index == 0) {
++		err = devm_pm_opp_set_config(dev, &config);
++		if (err && err != -ENODEV) {
++			dev_err(dev, "Failed to set primary OPP config: %d\n", err);
++			return err;
++		}
++	}
++
++	/* Attach every core device to the shared Device Tree OPP table */
++	err = devm_pm_opp_of_add_table(dev);
++	if (err && err != -ENODEV) {
++		dev_err(dev, "Failed to add OPP table for %s: %d\n", dev_name(dev), err);
++		return err;
++	} else if (!err) {
++		dev_info(dev, "OPP table registered for %s\n", dev_name(dev));
++	}
++
++	if (rocket_active_hz) {
++		struct rocket_device *rdev = core->rdev;
++		struct dev_pm_opp *opp;
++		unsigned long uv;
++
++		opp = dev_pm_opp_find_freq_exact(dev, rocket_active_hz, true);
++		if (IS_ERR(opp))
++			return dev_err_probe(dev, PTR_ERR(opp), "Active NPU OPP unavailable\n");
++		uv = dev_pm_opp_get_voltage(opp);
++		dev_pm_opp_put(opp);
++		if (uv != (rocket_active_hz == 800000000 ? 850000 : 800000))
++			return dev_err_probe(dev, -EINVAL, "Unexpected active NPU OPP voltage\n");
++
++		if (!rdev->supply) {
++			struct regulator *supply = regulator_get(dev, "npu");
++
++			if (IS_ERR(supply))
++				return dev_err_probe(dev, PTR_ERR(supply), "NPU supply unavailable\n");
++			/* One shared consumer, kept until every core is removed. */
++			rdev->supply = supply;
++			rdev->active_uv = uv;
++			rdev->idle_uv = 800000;
++			if (regulator_get_voltage(supply) != rdev->idle_uv ||
++			    regulator_is_supported_voltage(supply, uv, uv) <= 0)
++				return dev_err_probe(dev, -EINVAL, "NPU requires initial 800 mV and supported target\n");
++		}
++		if (rdev->active_uv != uv)
++			return dev_err_probe(dev, -EINVAL, "Inconsistent shared NPU OPP\n");
++	}
++
+ 	core->iommu_group = iommu_group_get(dev);
+ 
+ 	err = rocket_job_init(core);
+@@ -85,27 +140,9 @@
+ 	pm_runtime_enable(dev);
+ 
+ 	err = pm_runtime_resume_and_get(dev);
+-	if (err) {
++	if (err < 0) {
+ 		rocket_core_fini(core);
+ 		return err;
+-	}
+-
+-	/* Check if the shared OPP table was already initialized by a sibling core */
+-	if (core->index == 0) {
+-		err = devm_pm_opp_set_config(dev, &config);
+-		if (err && err != -ENODEV) {
+-			dev_err(dev, "Failed to set primary OPP config: %d\n", err);
+-			return err;
+-		}
+-	}
+-
+-	/* Attach every core device to the shared Device Tree OPP table */
+-	err = devm_pm_opp_of_add_table(dev);
+-	if (err && err != -ENODEV) {
+-		dev_err(dev, "Failed to add OPP table for %s: %d\n", dev_name(dev), err);
+-		return err;
+-	} else if (!err) {
+-		dev_info(dev, "OPP table registered for %s\n", dev_name(dev));
+ 	}
+ 
+ 	version = rocket_pc_readl(core, VERSION);
+@@ -122,7 +159,9 @@
+ void rocket_core_fini(struct rocket_core *core)
+ {
+ 	pm_runtime_dont_use_autosuspend(core->dev);
+-	pm_runtime_disable(core->dev);
++	/* Also handles removal before the autosuspend timer expires. */
++	if (pm_runtime_force_suspend(core->dev))
++		dev_err(core->dev, "failed to suspend core during removal\n");
+ 	iommu_group_put(core->iommu_group);
+ 	core->iommu_group = NULL;
+ 	rocket_job_fini(core);
+--- a/drivers/accel/rocket/rocket_core.h
++++ b/drivers/accel/rocket/rocket_core.h
+@@ -11,6 +11,10 @@
+ #include <linux/reset.h>
+ 
+ #include "rocket_registers.h"
++
++#define ROCKET_IDLE_HZ 200000000UL
++#define ROCKET_NPU_CLK 2
++extern unsigned long rocket_active_hz;
+ 
+ #define rocket_pc_readl(core, reg) \
+ 	readl((core)->pc_iomem + (REG_PC_##reg))
+--- a/drivers/accel/rocket/rocket_device.c
++++ b/drivers/accel/rocket/rocket_device.c
+@@ -7,6 +7,7 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
++#include <linux/regulator/consumer.h>
+ 
+ #include "rocket_device.h"
+ 
+@@ -45,6 +46,10 @@
+ 	if (err)
+ 		return ERR_PTR(-ENOMEM);
+ 
++	err = devm_mutex_init(dev, &rdev->pm_lock);
++	if (err)
++		return ERR_PTR(err);
++
+ 	err = drm_dev_register(ddev, 0);
+ 	if (err)
+ 		return ERR_PTR(err);
+@@ -57,4 +62,8 @@
+ 	WARN_ON(rdev->num_cores > 0);
+ 
+ 	drm_dev_unregister(&rdev->ddev);
++	if (rdev->supply) {
++		regulator_put(rdev->supply);
++		rdev->supply = NULL;
++	}
+ }
+--- a/drivers/accel/rocket/rocket_device.h
++++ b/drivers/accel/rocket/rocket_device.h
+@@ -17,6 +17,15 @@
+ 
+ 	struct mutex sched_lock;
+ 
++	/* The three cores share one NPU clock and power supply. */
++	struct mutex pm_lock;
++	unsigned long active_cores;
++	struct regulator *supply;
++	unsigned long active_uv;
++	unsigned long idle_uv;
++	int clock_fault;
++	bool clock_fault_pinned;
++
+ 	struct rocket_core *cores;
+ 	unsigned int num_cores;
+ };
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -12,6 +12,7 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/pm_runtime.h>
++#include <linux/regulator/consumer.h>
+ 
+ #include "rocket_device.h"
+ #include "rocket_drv.h"
+@@ -25,31 +26,109 @@
+ static struct platform_device *drm_dev;
+ static struct rocket_device *rdev;
+ 
++/* Opt-in shared voltage/frequency policy; zero preserves the DT state. */
++unsigned long rocket_active_hz;
++module_param_named(active_hz, rocket_active_hz, ulong, 0444);
++MODULE_PARM_DESC(active_hz, "0 for DT state, 600000000 Hz / 800 mV, or 800000000 Hz / 850 mV");
++
++/* Called only while genpd still supplies power and the register-access clocks. */
++static int rocket_set_powered_rate(struct rocket_core *core, unsigned long hz)
++{
++	struct clk *clk = core->clks[ROCKET_NPU_CLK].clk;
++	unsigned long actual;
++	int ret;
++
++	if (hz != ROCKET_IDLE_HZ && regulator_get_voltage(core->rdev->supply) != core->rdev->active_uv)
++		return -EINVAL;
++	ret = clk_set_rate(clk, hz);
++	if (ret)
++		return ret;
++	actual = clk_get_rate(clk);
++	if (actual != hz) {
++		dev_err(core->dev, "NPU clock requested %lu but reports %lu\n", hz, actual);
++		return -EIO;
++	}
++	return 0;
++}
++
++/* regulator_set_voltage waits for the regulator driver's ramp/settling time. */
++static int rocket_set_voltage(struct rocket_core *core, unsigned long uv)
++{
++	struct regulator *supply = core->rdev->supply;
++	int ret, actual;
++
++	ret = regulator_set_voltage(supply, uv, uv);
++	if (ret)
++		return ret;
++	actual = regulator_get_voltage(supply);
++	if (actual != uv) {
++		dev_err(core->dev, "NPU voltage requested %lu but reports %d\n", uv, actual);
++		return actual < 0 ? actual : -EIO;
++	}
++	return 0;
++}
++
++/* All transitions are serialized by pm_lock, while genpd is still powered. */
++static int rocket_enter_active(struct rocket_core *core)
++{
++	int ret = rocket_set_voltage(core, core->rdev->active_uv);
++
++	if (ret)
++		return ret;
++	return rocket_set_powered_rate(core, rocket_active_hz);
++}
++
++static int rocket_enter_idle(struct rocket_core *core)
++{
++	int ret = rocket_set_powered_rate(core, ROCKET_IDLE_HZ);
++
++	if (ret)
++		return ret; /* Never lower voltage before confirming the idle clock. */
++	return rocket_set_voltage(core, core->rdev->idle_uv);
++}
++
+ static void
+ rocket_iommu_domain_destroy(struct kref *kref)
+ {
+ 	struct rocket_iommu_domain *domain = container_of(kref, struct rocket_iommu_domain, kref);
+ 
++	drm_mm_takedown(&domain->mm);
++	mutex_destroy(&domain->mm_lock);
+ 	iommu_domain_free(domain->domain);
+ 	domain->domain = NULL;
+ 	kfree(domain);
++	module_put(THIS_MODULE);
+ }
+ 
+ static struct rocket_iommu_domain*
+ rocket_iommu_domain_create(struct device *dev)
+ {
+-	struct rocket_iommu_domain *domain = kmalloc(sizeof(*domain), GFP_KERNEL);
++	struct rocket_iommu_domain *domain;
++	u64 start, end;
+ 	void *err;
+ 
+-	if (!domain)
++	/* Keep the driver loaded until asynchronous users release the domain. */
++	if (!try_module_get(THIS_MODULE))
++		return ERR_PTR(-ENODEV);
++
++	domain = kmalloc(sizeof(*domain), GFP_KERNEL);
++	if (!domain) {
++		module_put(THIS_MODULE);
+ 		return ERR_PTR(-ENOMEM);
++	}
+ 
+ 	domain->domain = iommu_paging_domain_alloc(dev);
+ 	if (IS_ERR(domain->domain)) {
+ 		err = ERR_CAST(domain->domain);
+ 		kfree(domain);
++		module_put(THIS_MODULE);
+ 		return err;
+ 	}
++
++	start = domain->domain->geometry.aperture_start;
++	end = domain->domain->geometry.aperture_end;
++	drm_mm_init(&domain->mm, start, end - start + 1);
++	mutex_init(&domain->mm_lock);
+ 	kref_init(&domain->kref);
+ 
+ 	return domain;
+@@ -73,17 +152,11 @@
+ {
+ 	struct rocket_device *rdev = to_rocket_device(dev);
+ 	struct rocket_file_priv *rocket_priv;
+-	u64 start, end;
+ 	int ret;
+ 
+-	if (!try_module_get(THIS_MODULE))
+-		return -EINVAL;
+-
+ 	rocket_priv = kzalloc(sizeof(*rocket_priv), GFP_KERNEL);
+-	if (!rocket_priv) {
+-		ret = -ENOMEM;
+-		goto err_put_mod;
+-	}
++	if (!rocket_priv)
++		return -ENOMEM;
+ 
+ 	rocket_priv->rdev = rdev;
+ 	rocket_priv->domain = rocket_iommu_domain_create(rdev->cores[0].dev);
+@@ -94,25 +167,16 @@
+ 
+ 	file->driver_priv = rocket_priv;
+ 
+-	start = rocket_priv->domain->domain->geometry.aperture_start;
+-	end = rocket_priv->domain->domain->geometry.aperture_end;
+-	drm_mm_init(&rocket_priv->mm, start, end - start + 1);
+-	mutex_init(&rocket_priv->mm_lock);
+-
+ 	ret = rocket_job_open(rocket_priv);
+ 	if (ret)
+-		goto err_mm_takedown;
++		goto err_put_domain;
+ 
+ 	return 0;
+ 
+-err_mm_takedown:
+-	mutex_destroy(&rocket_priv->mm_lock);
+-	drm_mm_takedown(&rocket_priv->mm);
++err_put_domain:
+ 	rocket_iommu_domain_put(rocket_priv->domain);
+ err_free:
+ 	kfree(rocket_priv);
+-err_put_mod:
+-	module_put(THIS_MODULE);
+ 	return ret;
+ }
+ 
+@@ -122,11 +186,8 @@
+ 	struct rocket_file_priv *rocket_priv = file->driver_priv;
+ 
+ 	rocket_job_close(rocket_priv);
+-	mutex_destroy(&rocket_priv->mm_lock);
+-	drm_mm_takedown(&rocket_priv->mm);
+ 	rocket_iommu_domain_put(rocket_priv->domain);
+ 	kfree(rocket_priv);
+-	module_put(THIS_MODULE);
+ }
+ 
+ static const struct drm_ioctl_desc rocket_drm_driver_ioctls[] = {
+@@ -233,34 +294,80 @@
+ static int rocket_device_runtime_resume(struct device *dev)
+ {
+ 	struct rocket_device *rdev = dev_get_drvdata(dev);
+-	int core = find_core_for_dev(dev);
+-	int err = 0;
+-
+-	if (core < 0)
++	int index = find_core_for_dev(dev);
++	struct rocket_core *core;
++	int err;
++
++	if (index < 0)
+ 		return -ENODEV;
+-
+-	err = clk_bulk_prepare_enable(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
+-	if (err) {
+-		dev_err(dev, "failed to enable (%d) clocks for core %d\n", err, core);
++	core = &rdev->cores[index];
++	err = clk_bulk_prepare_enable(ARRAY_SIZE(core->clks), core->clks);
++	if (err)
+ 		return err;
+-	}
+-
++
++	mutex_lock(&rdev->pm_lock);
++	if (rocket_active_hz && !rdev->active_cores) {
++		err = rocket_enter_active(core);
++		if (err) {
++			/* Restore the GPLL path before genpd can turn off registers. */
++			int rollback = rocket_enter_idle(core);
++
++			dev_err(dev, "NPU voltage/rate change failed %d, rollback %d\n", err, rollback);
++			if (rollback) {
++				/* Returning an error here would let genpd power off an
++				 * unconfirmed PVTPLL state. Keep this core powered,
++				 * reject jobs, and prevent unload until suspend can
++				 * successfully restore the idle clock.
++				 */
++				rdev->clock_fault = err;
++				__module_get(THIS_MODULE);
++				rdev->clock_fault_pinned = true;
++				rdev->active_cores |= BIT(index);
++				mutex_unlock(&rdev->pm_lock);
++				return 0;
++			}
++			mutex_unlock(&rdev->pm_lock);
++			clk_bulk_disable_unprepare(ARRAY_SIZE(core->clks), core->clks);
++			return err;
++		}
++	}
++	rdev->active_cores |= BIT(index);
++	mutex_unlock(&rdev->pm_lock);
+ 	return 0;
+ }
+ 
+ static int rocket_device_runtime_suspend(struct device *dev)
+ {
+ 	struct rocket_device *rdev = dev_get_drvdata(dev);
+-	int core = find_core_for_dev(dev);
+-
+-	if (core < 0)
++	int index = find_core_for_dev(dev);
++	struct rocket_core *core;
++	int err;
++
++	if (index < 0)
+ 		return -ENODEV;
+-
+-	if (!rocket_job_is_idle(&rdev->cores[core]))
++	core = &rdev->cores[index];
++	if (!rocket_job_is_idle(core))
+ 		return -EBUSY;
+ 
+-	clk_bulk_disable_unprepare(ARRAY_SIZE(rdev->cores[core].clks), rdev->cores[core].clks);
+-
++	mutex_lock(&rdev->pm_lock);
++	if (rocket_active_hz && rdev->active_cores == BIT(index)) {
++		/* Last core: leave PVTPLL before genpd gates clocks/power. */
++		err = rocket_enter_idle(core);
++		if (err) {
++			mutex_unlock(&rdev->pm_lock);
++			return err; /* Keep power and the active-core bit on failure. */
++		}
++	}
++	rdev->active_cores &= ~BIT(index);
++	if (!rdev->active_cores) {
++		rdev->clock_fault = 0;
++		if (rdev->clock_fault_pinned) {
++			rdev->clock_fault_pinned = false;
++			module_put(THIS_MODULE);
++		}
++	}
++	mutex_unlock(&rdev->pm_lock);
++	clk_bulk_disable_unprepare(ARRAY_SIZE(core->clks), core->clks);
+ 	return 0;
+ }
+ 
+@@ -281,6 +388,10 @@
+ 
+ static int __init rocket_register(void)
+ {
++	if (rocket_active_hz && rocket_active_hz != 600000000 &&
++	    rocket_active_hz != 800000000)
++		return -EINVAL;
++
+ 	drm_dev = platform_device_register_simple("rknn", -1, NULL, 0);
+ 	if (IS_ERR(drm_dev))
+ 		return PTR_ERR(drm_dev);
+--- a/drivers/accel/rocket/rocket_drv.h
++++ b/drivers/accel/rocket/rocket_drv.h
+@@ -13,6 +13,9 @@
+ 
+ struct rocket_iommu_domain {
+ 	struct iommu_domain *domain;
++	/* Buffers and jobs can retain this address space after file close. */
++	struct drm_mm mm;
++	struct mutex mm_lock;
+ 	struct kref kref;
+ };
+ 
+@@ -20,8 +23,6 @@
+ 	struct rocket_device *rdev;
+ 
+ 	struct rocket_iommu_domain *domain;
+-	struct drm_mm mm;
+-	struct mutex mm_lock;
+ 
+ 	struct drm_sched_entity sched_entity;
+ };
+--- a/drivers/accel/rocket/rocket_gem.c
++++ b/drivers/accel/rocket/rocket_gem.c
+@@ -13,7 +13,7 @@
+ static void rocket_gem_bo_free(struct drm_gem_object *obj)
+ {
+ 	struct rocket_gem_object *bo = to_rocket_bo(obj);
+-	struct rocket_file_priv *rocket_priv = bo->driver_priv;
++	struct rocket_iommu_domain *domain = bo->domain;
+ 	size_t unmapped;
+ 
+ 	drm_WARN_ON(obj->dev, refcount_read(&bo->base.pages_use_count) > 1);
+@@ -21,14 +21,13 @@
+ 	unmapped = iommu_unmap(bo->domain->domain, bo->mm.start, bo->size);
+ 	drm_WARN_ON(obj->dev, unmapped != bo->size);
+ 
+-	mutex_lock(&rocket_priv->mm_lock);
++	mutex_lock(&domain->mm_lock);
+ 	drm_mm_remove_node(&bo->mm);
+-	mutex_unlock(&rocket_priv->mm_lock);
+-
+-	rocket_iommu_domain_put(bo->domain);
+-	bo->domain = NULL;
+-
++	mutex_unlock(&domain->mm_lock);
++
++	dma_fence_put(bo->last_writer);
+ 	drm_gem_shmem_free(&bo->base);
++	rocket_iommu_domain_put(domain);
+ }
+ 
+ static const struct drm_gem_object_funcs rocket_gem_funcs = {
+@@ -59,6 +58,7 @@
+ int rocket_ioctl_create_bo(struct drm_device *dev, void *data, struct drm_file *file)
+ {
+ 	struct rocket_file_priv *rocket_priv = file->driver_priv;
++	struct rocket_iommu_domain *domain = rocket_priv->domain;
+ 	struct drm_rocket_create_bo *args = data;
+ 	struct drm_gem_shmem_object *shmem_obj;
+ 	struct rocket_gem_object *rkt_obj;
+@@ -73,7 +73,6 @@
+ 	gem_obj = &shmem_obj->base;
+ 	rkt_obj = to_rocket_bo(gem_obj);
+ 
+-	rkt_obj->driver_priv = rocket_priv;
+ 	rkt_obj->domain = rocket_iommu_domain_get(rocket_priv);
+ 	rkt_obj->size = args->size;
+ 	rkt_obj->offset = 0;
+@@ -84,11 +83,11 @@
+ 		goto err;
+ 	}
+ 
+-	mutex_lock(&rocket_priv->mm_lock);
+-	ret = drm_mm_insert_node_generic(&rocket_priv->mm, &rkt_obj->mm,
++	mutex_lock(&domain->mm_lock);
++	ret = drm_mm_insert_node_generic(&domain->mm, &rkt_obj->mm,
+ 					 rkt_obj->size, PAGE_SIZE,
+ 					 0, 0);
+-	mutex_unlock(&rocket_priv->mm_lock);
++	mutex_unlock(&domain->mm_lock);
+ 	if (ret)
+ 		goto err;
+ 
+@@ -121,12 +120,13 @@
+ 		    rkt_obj->mm.start, rkt_obj->size);
+ 
+ err_remove_node:
+-	mutex_lock(&rocket_priv->mm_lock);
++	mutex_lock(&domain->mm_lock);
+ 	drm_mm_remove_node(&rkt_obj->mm);
+-	mutex_unlock(&rocket_priv->mm_lock);
++	mutex_unlock(&domain->mm_lock);
+ 
+ err:
+ 	drm_gem_shmem_object_free(gem_obj);
++	rocket_iommu_domain_put(domain);
+ 
+ 	return ret;
+ }
+@@ -137,6 +137,7 @@
+ 	unsigned long timeout = drm_timeout_abs_to_jiffies(args->timeout_ns);
+ 	struct drm_gem_object *gem_obj;
+ 	struct drm_gem_shmem_object *shmem_obj;
++	struct dma_fence *writer = NULL;
+ 	long ret = 0;
+ 
+ 	if (args->reserved != 0) {
+@@ -148,16 +149,38 @@
+ 	if (!gem_obj)
+ 		return -ENOENT;
+ 
+-	ret = dma_resv_wait_timeout(gem_obj->resv, DMA_RESV_USAGE_WRITE, true, timeout);
++	ret = dma_resv_lock_interruptible(gem_obj->resv, NULL);
++	if (ret)
++		goto out_put;
++	writer = dma_fence_get(to_rocket_bo(gem_obj)->last_writer);
++	dma_resv_unlock(gem_obj->resv);
++
++	ret = dma_resv_wait_timeout(gem_obj->resv, DMA_RESV_USAGE_READ, true, timeout);
+ 	if (!ret)
+ 		ret = timeout ? -ETIMEDOUT : -EBUSY;
+ 	else if (ret > 0)
+ 		ret = 0;
+ 
++	if (!ret && writer) {
++		timeout = drm_timeout_abs_to_jiffies(args->timeout_ns);
++		ret = dma_fence_wait_timeout(writer, true, timeout);
++		if (!ret)
++			ret = timeout ? -ETIMEDOUT : -EBUSY;
++		else if (ret > 0) {
++			ret = dma_fence_get_status(writer);
++			if (ret > 0)
++				ret = 0;
++		}
++	}
++	dma_fence_put(writer);
++	if (ret)
++		goto out_put;
++
+ 	shmem_obj = &to_rocket_bo(gem_obj)->base;
+ 
+ 	dma_sync_sgtable_for_cpu(dev->dev, shmem_obj->sgt, DMA_BIDIRECTIONAL);
+ 
++out_put:
+ 	drm_gem_object_put(gem_obj);
+ 
+ 	return ret;
+--- a/drivers/accel/rocket/rocket_gem.h
++++ b/drivers/accel/rocket/rocket_gem.h
+@@ -9,12 +9,14 @@
+ struct rocket_gem_object {
+ 	struct drm_gem_shmem_object base;
+ 
+-	struct rocket_file_priv *driver_priv;
+-
+ 	struct rocket_iommu_domain *domain;
+ 	struct drm_mm_node mm;
+ 	size_t size;
+ 	u32 offset;
++
++	/* Reservation-lock protected. Keep completed errors after dma_resv has
++	 * discarded signalled fences; a failed BO is not silently reusable. */
++	struct dma_fence *last_writer;
+ };
+ 
+ struct drm_gem_object *rocket_gem_create_object(struct drm_device *dev, size_t size);
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -8,6 +8,7 @@
+ #include <drm/drm_gem.h>
+ #include <drm/rocket_accel.h>
+ #include <linux/interrupt.h>
++#include <linux/moduleparam.h>
+ #include <linux/overflow.h>
+ #include <linux/iommu.h>
+ #include <linux/platform_device.h>
+@@ -17,9 +18,15 @@
+ #include "rocket_device.h"
+ #include "rocket_drv.h"
+ #include "rocket_job.h"
++#include "rocket_gem.h"
+ #include "rocket_registers.h"
+ 
+ #define JOB_TIMEOUT_MS 500
++
++/* Diagnostic mode: tasks must use either DPU or standalone PPU, never both. */
++static bool standalone_ppu;
++module_param(standalone_ppu, bool, 0444);
++MODULE_PARM_DESC(standalone_ppu, "Accept standalone PPU completion (test mode)");
+ 
+ static struct rocket_job *
+ to_rocket_job(struct drm_sched_job *sched_job)
+@@ -111,6 +118,9 @@
+ {
+ 	struct rocket_task *task;
+ 	unsigned int extra_bit;
++	u32 done_mask = PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1;
++	if (standalone_ppu)
++		done_mask |= PC_INTERRUPT_MASK_PPU_0 | PC_INTERRUPT_MASK_PPU_1;
+ 
+ 	/* Don't queue the job if a reset is in progress */
+ 	if (atomic_read(&core->reset.pending))
+@@ -139,8 +149,8 @@
+ 	rocket_pc_writel(core, REGISTER_AMOUNTS,
+ 			 PC_REGISTER_AMOUNTS_PC_DATA_AMOUNT((task->regcmd_count + 1) / 2 - 1));
+ 
+-	rocket_pc_writel(core, INTERRUPT_MASK, PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1);
+-	rocket_pc_writel(core, INTERRUPT_CLEAR, PC_INTERRUPT_CLEAR_DPU_0 | PC_INTERRUPT_CLEAR_DPU_1);
++	rocket_pc_writel(core, INTERRUPT_MASK, done_mask);
++	rocket_pc_writel(core, INTERRUPT_CLEAR, done_mask);
+ 
+ 	rocket_pc_writel(core, TASK_CON, PC_TASK_CON_RESERVED_0(1) |
+ 					 PC_TASK_CON_TASK_COUNT_CLEAR(1) |
+@@ -177,12 +187,19 @@
+ 
+ static void rocket_attach_object_fences(struct drm_gem_object **bos,
+ 					int bo_count,
+-					struct dma_fence *fence)
++					struct dma_fence *fence, bool write)
+ {
+ 	int i;
+ 
+-	for (i = 0; i < bo_count; i++)
+-		dma_resv_add_fence(bos[i]->resv, fence, DMA_RESV_USAGE_WRITE);
++	for (i = 0; i < bo_count; i++) {
++		dma_resv_add_fence(bos[i]->resv, fence,
++				   write ? DMA_RESV_USAGE_WRITE : DMA_RESV_USAGE_READ);
++		if (write) {
++			struct rocket_gem_object *bo = to_rocket_bo(bos[i]);
++			dma_fence_put(bo->last_writer);
++			bo->last_writer = dma_fence_get(fence);
++		}
++	}
+ }
+ 
+ static int rocket_job_push(struct rocket_job *job)
+@@ -202,6 +219,12 @@
+ 	memcpy(bos, job->in_bos, job->in_bo_count * sizeof(void *));
+ 	memcpy(&bos[job->in_bo_count], job->out_bos, job->out_bo_count * sizeof(void *));
+ 
++	job->data_deps = kvcalloc(bo_count, sizeof(*job->data_deps), GFP_KERNEL);
++	if (!job->data_deps) {
++		ret = -ENOMEM;
++		goto err;
++	}
++
+ 	ret = drm_gem_lock_reservations(bos, bo_count, &acquire_ctx);
+ 	if (ret)
+ 		goto err;
+@@ -219,12 +242,23 @@
+ 		if (ret)
+ 			goto err_unlock;
+ 
++		for (u32 i = 0; i < bo_count; i++) {
++			struct dma_fence *dep = to_rocket_bo(bos[i])->last_writer;
++			if (!dep)
++				continue;
++			job->data_deps[job->data_dep_count++] = dma_fence_get(dep);
++			ret = drm_sched_job_add_dependency(&job->base, dma_fence_get(dep));
++			if (ret)
++				goto err_unlock;
++		}
++
+ 		kref_get(&job->refcount); /* put by scheduler job completion */
+ 
+ 		drm_sched_entity_push_job(&job->base);
+ 	}
+ 
+-	rocket_attach_object_fences(job->out_bos, job->out_bo_count, job->inference_done_fence);
++	rocket_attach_object_fences(job->in_bos, job->in_bo_count, job->inference_done_fence, false);
++	rocket_attach_object_fences(job->out_bos, job->out_bo_count, job->inference_done_fence, true);
+ 
+ err_unlock:
+ 	drm_gem_unlock_reservations(bos, bo_count, &acquire_ctx);
+@@ -238,12 +272,14 @@
+ {
+ 	struct rocket_job *job = container_of(ref, struct rocket_job,
+ 						refcount);
++	struct rocket_iommu_domain *domain = job->domain;
+ 	unsigned int i;
+-
+-	rocket_iommu_domain_put(job->domain);
+ 
+ 	dma_fence_put(job->done_fence);
+ 	dma_fence_put(job->inference_done_fence);
++	for (i = 0; i < job->data_dep_count; i++)
++		dma_fence_put(job->data_deps[i]);
++	kvfree(job->data_deps);
+ 
+ 	if (job->in_bos) {
+ 		for (i = 0; i < job->in_bo_count; i++)
+@@ -262,6 +298,8 @@
+ 	kvfree(job->tasks);
+ 
+ 	kfree(job);
++	/* The last reference may release the address space and module pin. */
++	rocket_iommu_domain_put(domain);
+ }
+ 
+ static void rocket_job_put(struct rocket_job *job)
+@@ -298,6 +336,12 @@
+ 	struct rocket_core *core = sched_to_core(rdev, sched_job->sched);
+ 	struct dma_fence *fence = NULL;
+ 	int ret;
++
++	for (unsigned int i = 0; i < job->data_dep_count; i++) {
++		ret = dma_fence_get_status(job->data_deps[i]);
++		if (ret < 0)
++			return ERR_PTR(ret);
++	}
+ 
+ 	if (unlikely(job->base.s_fence->finished.error))
+ 		return NULL;
+@@ -320,6 +364,13 @@
+ 	ret = pm_runtime_resume_and_get(core->dev);
+ 	if (ret < 0)
+ 		goto err_put_fences;
++
++	/* A failed frequency rollback deliberately keeps power on, but must
++	 * never allow a job to run with an unconfirmed clock state.
++	 */
++	ret = READ_ONCE(core->rdev->clock_fault);
++	if (ret)
++		goto err_put_pm;
+ 
+ 	ret = iommu_attach_group(job->domain->domain, core->iommu_group);
+ 	if (ret < 0)
+@@ -363,7 +414,7 @@
+ }
+ 
+ static void
+-rocket_reset(struct rocket_core *core, struct drm_sched_job *bad)
++rocket_reset(struct rocket_core *core, struct drm_sched_job *bad, int error)
+ {
+ 	if (!atomic_read(&core->reset.pending))
+ 		return;
+@@ -391,7 +442,7 @@
+ 	atomic_set(&core->reset.pending, 0);
+ 
+ 	/* Restart the scheduler */
+-	drm_sched_start(&core->sched, 0);
++	drm_sched_start(&core->sched, error);
+ }
+ 
+ static enum drm_gpu_sched_stat rocket_job_timedout(struct drm_sched_job *sched_job)
+@@ -403,7 +454,7 @@
+ 	dev_err(core->dev, "NPU job timed out");
+ 
+ 	atomic_set(&core->reset.pending, 1);
+-	rocket_reset(core, sched_job);
++	rocket_reset(core, sched_job, -ETIMEDOUT);
+ 
+ 	return DRM_GPU_SCHED_STAT_RESET;
+ }
+@@ -413,7 +464,7 @@
+ 	struct rocket_core *core;
+ 
+ 	core = container_of(work, struct rocket_core, reset.work);
+-	rocket_reset(core, NULL);
++	rocket_reset(core, NULL, -EIO);
+ }
+ 
+ static const struct drm_sched_backend_ops rocket_sched_ops = {
+@@ -439,8 +490,10 @@
+ 	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_READ_ERROR);
+ 	WARN_ON(raw_status & PC_INTERRUPT_RAW_STATUS_DMA_WRITE_ERROR);
+ 
+-	if (!(raw_status & PC_INTERRUPT_RAW_STATUS_DPU_0 ||
+-	      raw_status & PC_INTERRUPT_RAW_STATUS_DPU_1))
++	if (!(raw_status & (PC_INTERRUPT_RAW_STATUS_DPU_0 |
++	                   PC_INTERRUPT_RAW_STATUS_DPU_1)) &&
++	    !(standalone_ppu && (raw_status & (PC_INTERRUPT_RAW_STATUS_PPU_0 |
++	                                       PC_INTERRUPT_RAW_STATUS_PPU_1))))
+ 		return IRQ_NONE;
+ 
+ 	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);
+@@ -641,8 +694,13 @@
+ 	}
+ 
+ 
+-	for (i = 0; i < args->job_count; i++)
+-		rocket_ioctl_submit_job(dev, file, &jobs[i]);
++	/* Stop at the first rejected job and report its error to userspace.
++	 * Earlier jobs may already be queued; submit is not transactional. */
++	for (i = 0; i < args->job_count; i++) {
++		ret = rocket_ioctl_submit_job(dev, file, &jobs[i]);
++		if (ret)
++			goto exit;
++	}
+ 
+ exit:
+ 	kvfree(jobs);
+--- a/drivers/accel/rocket/rocket_job.h
++++ b/drivers/accel/rocket/rocket_job.h
+@@ -26,6 +26,11 @@
+ 	u32 in_bo_count;
+ 	u32 out_bo_count;
+ 
++	/* Retained after drm-sched consumes its dependency array, so run_job can
++	 * propagate a failed producer instead of executing with stale data. */
++	struct dma_fence **data_deps;
++	u32 data_dep_count;
++
+ 	struct rocket_task *tasks;
+ 	u32 task_count;
+ 	u32 next_task_idx;

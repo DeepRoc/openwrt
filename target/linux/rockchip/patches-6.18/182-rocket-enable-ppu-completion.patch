@@ -1,0 +1,42 @@
+Subject: [PATCH] accel/rocket: accept standalone PPU completion by default
+
+PPU operations are part of normal userspace operation support; no test-mode
+module parameter is required. Retain the evaluated DPU/PPU completion masks.
+
+--- a/drivers/accel/rocket/rocket_job.c
++++ b/drivers/accel/rocket/rocket_job.c
+@@ -23,10 +23,7 @@
+ 
+ #define JOB_TIMEOUT_MS 500
+ 
+-/* Diagnostic mode: tasks must use either DPU or standalone PPU, never both. */
+-static bool standalone_ppu;
+-module_param(standalone_ppu, bool, 0444);
+-MODULE_PARM_DESC(standalone_ppu, "Accept standalone PPU completion (test mode)");
++/* Tasks use either DPU or standalone PPU completion. */
+ 
+ static struct rocket_job *
+ to_rocket_job(struct drm_sched_job *sched_job)
+@@ -118,9 +115,8 @@
+ {
+ 	struct rocket_task *task;
+ 	unsigned int extra_bit;
+-	u32 done_mask = PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1;
+-	if (standalone_ppu)
+-		done_mask |= PC_INTERRUPT_MASK_PPU_0 | PC_INTERRUPT_MASK_PPU_1;
++	u32 done_mask = PC_INTERRUPT_MASK_DPU_0 | PC_INTERRUPT_MASK_DPU_1 |
++	                PC_INTERRUPT_MASK_PPU_0 | PC_INTERRUPT_MASK_PPU_1;
+ 
+ 	/* Don't queue the job if a reset is in progress */
+ 	if (atomic_read(&core->reset.pending))
+@@ -492,8 +488,8 @@
+ 
+ 	if (!(raw_status & (PC_INTERRUPT_RAW_STATUS_DPU_0 |
+ 	                   PC_INTERRUPT_RAW_STATUS_DPU_1)) &&
+-	    !(standalone_ppu && (raw_status & (PC_INTERRUPT_RAW_STATUS_PPU_0 |
+-	                                       PC_INTERRUPT_RAW_STATUS_PPU_1))))
++	    !(raw_status & (PC_INTERRUPT_RAW_STATUS_PPU_0 |
++	                     PC_INTERRUPT_RAW_STATUS_PPU_1)))
+ 		return IRQ_NONE;
+ 
+ 	rocket_pc_writel(core, INTERRUPT_MASK, 0x0);

@@ -1,0 +1,18 @@
+Subject: [PATCH] accel/rocket: default to the validated 600 MHz OPP
+
+Use the product operating point on RK3588 without a manual module parameter.
+The existing probe checks still require the matching DT OPP and voltage.
+
+--- a/drivers/accel/rocket/rocket_drv.c
++++ b/drivers/accel/rocket/rocket_drv.c
+@@ -26,8 +26,8 @@
+ static struct platform_device *drm_dev;
+ static struct rocket_device *rdev;
+ 
+-/* Opt-in shared voltage/frequency policy; zero preserves the DT state. */
+-unsigned long rocket_active_hz;
++/* Default to the validated RK3588 operating point; zero keeps DT state. */
++unsigned long rocket_active_hz = 600000000;
+ module_param_named(active_hz, rocket_active_hz, ulong, 0444);
+ MODULE_PARM_DESC(active_hz, "0 for DT state, 600000000 Hz / 800 mV, or 800000000 Hz / 850 mV");
+ 
