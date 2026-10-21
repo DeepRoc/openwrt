@@ -1,25 +1,117 @@
-Index: linux-6.18.55/drivers/media/platform/rockchip/Kconfig
-===================================================================
---- linux-6.18.55.orig/drivers/media/platform/rockchip/Kconfig
-+++ linux-6.18.55/drivers/media/platform/rockchip/Kconfig
-@@ -6,3 +6,4 @@ source "drivers/media/platform/rockchip/
- source "drivers/media/platform/rockchip/rkcif/Kconfig"
+diff --git a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+index a031f42c558e..71e6bee8daa4 100644
+--- a/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
++++ b/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
+@@ -1353,6 +1353,86 @@ vepu121_3_mmu: iommu@fdbac800 {
+ 		#iommu-cells = <0>;
+ 	};
+ 
++	mpp_srv: mpp-srv {
++		compatible = "rockchip,mpp-service";
++		rockchip,taskqueue-count = <12>;
++		rockchip,resetgroup-count = <1>;
++	};
++
++	venc_ccu: venc-ccu {
++		compatible = "rockchip,rkv-encoder-v2-ccu";
++	};
++
++	venc0: venc-core@fdbd0000 {
++		compatible = "rockchip,rkv-encoder-v2-core";
++		reg = <0x0 0xfdbd0000 0x0 0x6000>;
++		interrupts = <GIC_SPI 101 IRQ_TYPE_LEVEL_HIGH 0>;
++		interrupt-names = "irq_rkvenc0";
++		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>,
++			 <&cru CLK_RKVENC0_CORE>;
++		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
++		rockchip,normal-rates = <500000000>, <0>, <800000000>;
++		assigned-clocks = <&cru ACLK_RKVENC0>, <&cru CLK_RKVENC0_CORE>;
++		assigned-clock-rates = <500000000>, <800000000>;
++		resets = <&cru SRST_A_RKVENC0>, <&cru SRST_H_RKVENC0>,
++			 <&cru SRST_RKVENC0_CORE>;
++		reset-names = "video_a", "video_h", "video_core";
++		iommus = <&venc0_mmu>;
++		rockchip,srv = <&mpp_srv>;
++		rockchip,ccu = <&venc_ccu>;
++		rockchip,taskqueue-node = <7>;
++		rockchip,resetgroup-node = <0>;
++		rockchip,task-capacity = <8>;
++		power-domains = <&power RK3588_PD_VENC0>;
++	};
++
++	venc0_mmu: iommu@fdbdf000 {
++		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
++		reg = <0x0 0xfdbdf000 0x0 0x40>, <0x0 0xfdbdf040 0x0 0x40>;
++		interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH 0>,
++			     <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH 0>;
++		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>;
++		clock-names = "aclk", "iface";
++		rockchip,disable-mmu-reset;
++		#iommu-cells = <0>;
++		power-domains = <&power RK3588_PD_VENC0>;
++	};
++
++	venc1: venc-core@fdbe0000 {
++		compatible = "rockchip,rkv-encoder-v2-core";
++		reg = <0x0 0xfdbe0000 0x0 0x6000>;
++		interrupts = <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH 0>;
++		interrupt-names = "irq_rkvenc1";
++		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>,
++			 <&cru CLK_RKVENC1_CORE>;
++		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
++		rockchip,normal-rates = <500000000>, <0>, <800000000>;
++		assigned-clocks = <&cru ACLK_RKVENC1>, <&cru CLK_RKVENC1_CORE>;
++		assigned-clock-rates = <500000000>, <800000000>;
++		resets = <&cru SRST_A_RKVENC1>, <&cru SRST_H_RKVENC1>,
++			 <&cru SRST_RKVENC1_CORE>;
++		reset-names = "video_a", "video_h", "video_core";
++		iommus = <&venc1_mmu>;
++		rockchip,srv = <&mpp_srv>;
++		rockchip,ccu = <&venc_ccu>;
++		rockchip,taskqueue-node = <7>;
++		rockchip,resetgroup-node = <0>;
++		rockchip,task-capacity = <8>;
++		power-domains = <&power RK3588_PD_VENC1>;
++	};
++
++	venc1_mmu: iommu@fdbef000 {
++		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
++		reg = <0x0 0xfdbef000 0x0 0x40>, <0x0 0xfdbef040 0x0 0x40>;
++		interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH 0>,
++			     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH 0>;
++		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>;
++		clock-names = "aclk", "iface";
++		rockchip,disable-mmu-reset;
++		#iommu-cells = <0>;
++		power-domains = <&power RK3588_PD_VENC1>;
++	};
++
+ 	av1d: video-codec@fdc70000 {
+ 		compatible = "rockchip,rk3588-av1-vpu";
+ 		reg = <0x0 0xfdc70000 0x0 0x800>;
+diff --git a/drivers/media/platform/rockchip/Kconfig b/drivers/media/platform/rockchip/Kconfig
+index 9bbeec4996aa..bd435344c038 100644
+--- a/drivers/media/platform/rockchip/Kconfig
++++ b/drivers/media/platform/rockchip/Kconfig
+@@ -5,3 +5,4 @@ comment "Rockchip media platform drivers"
+ source "drivers/media/platform/rockchip/rga/Kconfig"
  source "drivers/media/platform/rockchip/rkisp1/Kconfig"
  source "drivers/media/platform/rockchip/rkvdec/Kconfig"
 +source "drivers/media/platform/rockchip/rkvenc/Kconfig"
-Index: linux-6.18.55/drivers/media/platform/rockchip/Makefile
-===================================================================
---- linux-6.18.55.orig/drivers/media/platform/rockchip/Makefile
-+++ linux-6.18.55/drivers/media/platform/rockchip/Makefile
-@@ -3,3 +3,4 @@ obj-y += rga/
- obj-y += rkcif/
+diff --git a/drivers/media/platform/rockchip/Makefile b/drivers/media/platform/rockchip/Makefile
+index 286dc5c53f7e..49594c3ece04 100644
+--- a/drivers/media/platform/rockchip/Makefile
++++ b/drivers/media/platform/rockchip/Makefile
+@@ -2,3 +2,4 @@
+ obj-y += rga/
  obj-y += rkisp1/
  obj-y += rkvdec/
 +obj-y += rkvenc/
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Kconfig
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/Kconfig b/drivers/media/platform/rockchip/rkvenc/Kconfig
+new file mode 100644
+index 000000000000..dd6b0365a7c0
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Kconfig
++++ b/drivers/media/platform/rockchip/rkvenc/Kconfig
 @@ -0,0 +1,17 @@
 +config VIDEO_ROCKCHIP_RKVENC
 +	tristate "Rockchip RKVENC (VEPU580) encoder driver"
@@ -38,17 +130,19 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Kconfig
 +
 +	  To compile this driver as a module, choose M here: the module
 +	  will be called rkvenc.
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Makefile
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/Makefile b/drivers/media/platform/rockchip/rkvenc/Makefile
+new file mode 100644
+index 000000000000..bd8d1e73ab24
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/Makefile
++++ b/drivers/media/platform/rockchip/rkvenc/Makefile
 @@ -0,0 +1,2 @@
 +obj-$(CONFIG_VIDEO_ROCKCHIP_RKVENC) += rkvenc.o
 +rkvenc-objs := rkvenc_drv.o rkvenc_hw.o rkvenc_service.o rkvenc_task.o rkvenc_iommu.o
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c b/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
+new file mode 100644
+index 000000000000..d15121963d3f
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
 @@ -0,0 +1,481 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -531,10 +625,11 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_drv.c
 +MODULE_LICENSE("Dual MIT/GPL");
 +MODULE_AUTHOR("Rockchip Electronics Co., Ltd.");
 +MODULE_IMPORT_NS("DMA_BUF");
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c b/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
+new file mode 100644
+index 000000000000..ce55da43c0ac
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
 @@ -0,0 +1,888 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -1424,10 +1519,11 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.c
 +	pm_runtime_disable(enc->dev);
 +	return 0;
 +}
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h b/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
+new file mode 100644
+index 000000000000..6392b1184c99
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
 @@ -0,0 +1,881 @@
 +/* SPDX-License-Identifier: (GPL-2.0+ OR MIT) */
 +/*
@@ -2310,11 +2406,12 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_hw.h
 +extern const struct rkvenc_trans_info trans_rkvenc_v2[];
 +
 +#endif /* __RKVENC_HW_H__ */
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c b/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
+new file mode 100644
+index 000000000000..e43450dbff12
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
-@@ -0,0 +1,463 @@
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
+@@ -0,0 +1,503 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
 + * Rockchip VEPU580 encoder driver - IOMMU and DMA buffer helpers
@@ -2500,8 +2597,48 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 +		rkvenc_err("dma_buf_map_attachment fd %d failed(%d)\n", fd, ret);
 +		goto fail_map;
 +	}
-+	buffer->iova = sg_dma_address(sgt->sgl);
-+	buffer->size = sg_dma_len(sgt->sgl);
++	struct scatterlist *sg;
++	dma_addr_t base, expected;
++	size_t mapped_size = 0;
++	int i;
++
++	base = sg_dma_address(sgt->sgl);
++	expected = base;
++
++	for_each_sg(sgt->sgl, sg, sgt->nents, i) {
++		dma_addr_t addr = sg_dma_address(sg);
++		size_t len = sg_dma_len(sg);
++
++		if (!len || addr != expected) {
++			dev_err(dma->dev,
++				"noncontiguous DMA mapping: fd=%d sg=%d "
++				"addr=%pad expected=%pad len=%zu\n",
++				fd, i, &addr, &expected, len);
++			/* Jump to the existing DMA import cleanup path. */
++			ret = -EINVAL;
++			goto fail_map;
++		}
++
++		if (len > SIZE_MAX - mapped_size) {
++			ret = -EOVERFLOW;
++			goto fail_map;
++		}
++
++		mapped_size += len;
++		expected = addr + len;
++	}
++
++	if (mapped_size < dmabuf->size) {
++		dev_err(dma->dev,
++			"incomplete DMA mapping: fd=%d mapped=%zu size=%zu\n",
++			fd, mapped_size, dmabuf->size);
++		ret = -EINVAL;
++		goto fail_map;
++	}
++
++	buffer->iova = base;
++	buffer->size = dmabuf->size;
++ 
 +	buffer->attach = attach;
 +	buffer->sgt = sgt;
 +	buffer->dma = dma;
@@ -2521,13 +2658,13 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 +
 +	return buffer;
 +
-+fail_map:
++ fail_map:
 +	dma_buf_detach(buffer->dmabuf, attach);
-+fail_attach:
++ fail_attach:
 +	mutex_lock(&dma->list_mutex);
 +	list_add_tail(&buffer->link, &dma->unused_list);
 +	mutex_unlock(&dma->list_mutex);
-+fail:
++ fail:
 +	dma_buf_put(dmabuf);
 +	return ERR_PTR(ret);
 +}
@@ -2778,10 +2915,11 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_iommu.c
 +
 +	return 0;
 +}
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c b/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
+new file mode 100644
+index 000000000000..0498dbdfc699
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
 @@ -0,0 +1,1206 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -3989,10 +4127,11 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_service.c
 +
 +	return 0;
 +}
-Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
-===================================================================
+diff --git a/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c b/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
+new file mode 100644
+index 000000000000..1522aa736d6a
 --- /dev/null
-+++ linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
++++ b/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
 @@ -0,0 +1,300 @@
 +// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 +/*
@@ -4294,10 +4433,11 @@ Index: linux-6.18.55/drivers/media/platform/rockchip/rkvenc/rkvenc_task.c
 +
 +	kthread_queue_work(&mpp->queue->worker, &mpp->work);
 +}
-Index: linux-6.18.55/include/uapi/linux/rkvenc.h
-===================================================================
+diff --git a/include/uapi/linux/rkvenc.h b/include/uapi/linux/rkvenc.h
+new file mode 100644
+index 000000000000..4fc1827ed150
 --- /dev/null
-+++ linux-6.18.55/include/uapi/linux/rkvenc.h
++++ b/include/uapi/linux/rkvenc.h
 @@ -0,0 +1,84 @@
 +/* SPDX-License-Identifier: ((GPL-2.0+ WITH Linux-syscall-note) OR MIT) */
 +/*
@@ -4383,94 +4523,3 @@ Index: linux-6.18.55/include/uapi/linux/rkvenc.h
 +};
 +
 +#endif /* _UAPI_RKVENC_H */
-Index: linux-6.18.55/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-===================================================================
---- linux-6.18.55.orig/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-+++ linux-6.18.55/arch/arm64/boot/dts/rockchip/rk3588-base.dtsi
-@@ -1417,6 +1417,86 @@
- 		#iommu-cells = <0>;
- 	};
- 
-+	mpp_srv: mpp-srv {
-+		compatible = "rockchip,mpp-service";
-+		rockchip,taskqueue-count = <12>;
-+		rockchip,resetgroup-count = <1>;
-+	};
-+
-+	venc_ccu: venc-ccu {
-+		compatible = "rockchip,rkv-encoder-v2-ccu";
-+	};
-+
-+	venc0: venc-core@fdbd0000 {
-+		compatible = "rockchip,rkv-encoder-v2-core";
-+		reg = <0x0 0xfdbd0000 0x0 0x6000>;
-+		interrupts = <GIC_SPI 101 IRQ_TYPE_LEVEL_HIGH 0>;
-+		interrupt-names = "irq_rkvenc0";
-+		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>,
-+			 <&cru CLK_RKVENC0_CORE>;
-+		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
-+		rockchip,normal-rates = <500000000>, <0>, <800000000>;
-+		assigned-clocks = <&cru ACLK_RKVENC0>, <&cru CLK_RKVENC0_CORE>;
-+		assigned-clock-rates = <500000000>, <800000000>;
-+		resets = <&cru SRST_A_RKVENC0>, <&cru SRST_H_RKVENC0>,
-+			 <&cru SRST_RKVENC0_CORE>;
-+		reset-names = "video_a", "video_h", "video_core";
-+		iommus = <&venc0_mmu>;
-+		rockchip,srv = <&mpp_srv>;
-+		rockchip,ccu = <&venc_ccu>;
-+		rockchip,taskqueue-node = <7>;
-+		rockchip,resetgroup-node = <0>;
-+		rockchip,task-capacity = <8>;
-+		power-domains = <&power RK3588_PD_VENC0>;
-+	};
-+
-+	venc0_mmu: iommu@fdbdf000 {
-+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
-+		reg = <0x0 0xfdbdf000 0x0 0x40>, <0x0 0xfdbdf040 0x0 0x40>;
-+		interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH 0>,
-+			     <GIC_SPI 100 IRQ_TYPE_LEVEL_HIGH 0>;
-+		clocks = <&cru ACLK_RKVENC0>, <&cru HCLK_RKVENC0>;
-+		clock-names = "aclk", "iface";
-+		rockchip,disable-mmu-reset;
-+		#iommu-cells = <0>;
-+		power-domains = <&power RK3588_PD_VENC0>;
-+	};
-+
-+	venc1: venc-core@fdbe0000 {
-+		compatible = "rockchip,rkv-encoder-v2-core";
-+		reg = <0x0 0xfdbe0000 0x0 0x6000>;
-+		interrupts = <GIC_SPI 104 IRQ_TYPE_LEVEL_HIGH 0>;
-+		interrupt-names = "irq_rkvenc1";
-+		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>,
-+			 <&cru CLK_RKVENC1_CORE>;
-+		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
-+		rockchip,normal-rates = <500000000>, <0>, <800000000>;
-+		assigned-clocks = <&cru ACLK_RKVENC1>, <&cru CLK_RKVENC1_CORE>;
-+		assigned-clock-rates = <500000000>, <800000000>;
-+		resets = <&cru SRST_A_RKVENC1>, <&cru SRST_H_RKVENC1>,
-+			 <&cru SRST_RKVENC1_CORE>;
-+		reset-names = "video_a", "video_h", "video_core";
-+		iommus = <&venc1_mmu>;
-+		rockchip,srv = <&mpp_srv>;
-+		rockchip,ccu = <&venc_ccu>;
-+		rockchip,taskqueue-node = <7>;
-+		rockchip,resetgroup-node = <0>;
-+		rockchip,task-capacity = <8>;
-+		power-domains = <&power RK3588_PD_VENC1>;
-+	};
-+
-+	venc1_mmu: iommu@fdbef000 {
-+		compatible = "rockchip,rk3588-iommu", "rockchip,rk3568-iommu";
-+		reg = <0x0 0xfdbef000 0x0 0x40>, <0x0 0xfdbef040 0x0 0x40>;
-+		interrupts = <GIC_SPI 102 IRQ_TYPE_LEVEL_HIGH 0>,
-+			     <GIC_SPI 103 IRQ_TYPE_LEVEL_HIGH 0>;
-+		clocks = <&cru ACLK_RKVENC1>, <&cru HCLK_RKVENC1>;
-+		clock-names = "aclk", "iface";
-+		rockchip,disable-mmu-reset;
-+		#iommu-cells = <0>;
-+		power-domains = <&power RK3588_PD_VENC1>;
-+	};
-+
- 	av1d: video-codec@fdc70000 {
- 		compatible = "rockchip,rk3588-av1-vpu";
- 		reg = <0x0 0xfdc70000 0x0 0x800>;
