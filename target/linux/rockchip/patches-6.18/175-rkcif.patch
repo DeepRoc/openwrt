@@ -1,0 +1,35 @@
+Rockchip: share the media pipeline across capture streams
+
+Keep one media pipeline per CIF interface so RGB and IR capture streams
+can start on the same media graph. Formats, CSI-2 virtual-channel routing
+and packed UYVY DMA setup are supplied by the developer patches.
+
+--- a/drivers/media/platform/rockchip/rkcif/rkcif-common.h
++++ b/drivers/media/platform/rockchip/rkcif/rkcif-common.h
+@@ -165,7 +165,6 @@
+ 	struct mutex vlock;
+ 
+ 	struct media_pad pad;
+-	struct media_pipeline pipeline;
+ 	struct v4l2_pix_format_mplane pix;
+ 	struct vb2_queue buf_queue;
+ 	struct video_device vdev;
+@@ -189,6 +188,7 @@
+ 	unsigned int streams_num;
+ 	const struct rkcif_input_fmt *in_fmts;
+ 	unsigned int in_fmts_num;
++	struct media_pipeline pipeline;
+ 
+ 	struct media_pad pads[RKCIF_IF_PAD_MAX];
+ 	struct v4l2_fwnode_endpoint vep;
+--- a/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
++++ b/drivers/media/platform/rockchip/rkcif/rkcif-stream.c
+@@ -259,7 +259,7 @@
+ 	stream->frame_idx = 0;
+ 	stream->frame_phase = 0;
+ 
+-	ret = video_device_pipeline_start(&stream->vdev, &stream->pipeline);
++	ret = video_device_pipeline_start(&stream->vdev, &stream->interface->pipeline);
+ 	if (ret) {
+ 		dev_err(rkcif->dev, "failed to start pipeline %d\n", ret);
+ 		goto err_out;
