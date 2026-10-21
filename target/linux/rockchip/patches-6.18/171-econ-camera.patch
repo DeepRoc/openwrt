@@ -1730,10 +1730,10 @@ index 000000000000..171767871cf3
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
 new file mode 100644
-index 000000000000..d32d00487312
+index 000000000000..635ed934dbcf
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam57.c
-@@ -0,0 +1,2607 @@
+@@ -0,0 +1,2615 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM57 containing oax4000 ISP connected to OmniVision ox05b1s sensor.
@@ -3034,6 +3034,7 @@ index 000000000000..d32d00487312
 +	struct v4l2_ctrl_handler ctrls;
 +	const struct cam57_mode *current_mode;
 +	u16 gain, gain_ir;
++	u64 enabled_streams;
 +	bool streaming;
 +
 +	/* Deferred initialization work and status flags */
@@ -3936,6 +3937,7 @@ index 000000000000..d32d00487312
 +		cam->streaming = true;
 +	}
 +
++	cam->enabled_streams |= streams_mask;
 +	return 0;
 +}
 +
@@ -3944,12 +3946,18 @@ index 000000000000..d32d00487312
 +				  u32 pad, u64 streams_mask)
 +{
 +	struct cam57_dev *cam = to_cam57(sd);
++	u64 enabled_streams = cam->enabled_streams & ~streams_mask;
++	int ret;
 +
-+	if (cam->streaming) {
-+		cam57_sensor_write_reg(cam, 0x0100, 0x00);
++	/* RGB and IR share the sensor's global streaming control. */
++	if (!enabled_streams && cam->streaming) {
++		ret = cam57_sensor_write_reg(cam, 0x0100, 0x00);
++		if (ret)
++			return ret;
 +		cam->streaming = false;
 +	}
 +
++	cam->enabled_streams = enabled_streams;
 +	return 0;
 +}
 +
