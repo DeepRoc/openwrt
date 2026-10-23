@@ -40,10 +40,10 @@ index 57cdd8dc96f6..01a299c8eefe 100644
  obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
 diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
 new file mode 100644
-index 000000000000..171767871cf3
+index 000000000000..3172594ead36
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam31.c
-@@ -0,0 +1,1684 @@
+@@ -0,0 +1,1687 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM31 containing Sony isx031 sensor.
@@ -106,7 +106,7 @@ index 000000000000..171767871cf3
 +
 +#define CAM31_INIT_GPIOS
 +
-+// #define DEBUG
++#define DEBUG
 +
 +/* e-Con Proprietary Host Command Set */
 +enum cam31_mcu_cmd_id {
@@ -219,6 +219,7 @@ index 000000000000..171767871cf3
 +	int num_mcu_ctrls;
 +	int current_mode;
 +	bool streaming;
++	bool controls_registered;
 +
 +	/* Deferred initialization work and state tracking */
 +	struct delayed_work init_work;
@@ -905,7 +906,7 @@ index 000000000000..171767871cf3
 +	u16 index = 0;
 +	int ret;
 +
-+        if (list_empty(&hdl->ctrls)) {
++        if (!cam->controls_registered) {
 +		while (index < MCU_MAX_CONTROLS) {
 +			tx_payload[0] = (index >> 8) & 0xFF;
 +			tx_payload[1] = index & 0xFF;
@@ -950,6 +951,7 @@ index 000000000000..171767871cf3
 +			v4l2_ctrl_handler_free(hdl);
 +			return hdl->error;
 +		}
++		cam->controls_registered = true;
 +	}
 +	return v4l2_ctrl_handler_setup(&cam->ctrls);
 +}
@@ -1269,10 +1271,11 @@ index 000000000000..171767871cf3
 +	} else {
 +		dev_warn(&cam->client->dev, "Link lost! Resetting initialized state...\n");
 +		cancel_delayed_work_sync(&cam->init_work);
-+		if (cam->initialized) {
-+			v4l2_ctrl_handler_free(&cam->ctrls);
-+			cam->initialized = false;
-+		}
++
++		mutex_lock(&cam->lock);
++		cam->initialized = false;
++		cam->streaming = false;
++		mutex_unlock(&cam->lock);
 +        }
 +	return 0;
 +}
@@ -1699,11 +1702,11 @@ index 000000000000..171767871cf3
 +
 +        v4l2_async_unregister_subdev(sd);
 +
-+	if (cam->initialized) {
-+		v4l2_ctrl_handler_free(&cam->ctrls);
++	if (cam->initialized)
 +		cam31_mcu_cmd(cam->client, CMD_ID_DE_INIT_CAM, NULL, 0, NULL, 0);
-+	}
 +
++	v4l2_ctrl_handler_free(&cam->ctrls);
++	v4l2_subdev_cleanup(sd);
 +	media_entity_cleanup(&sd->entity);
 +	mutex_destroy(&cam->lock);
 +}
@@ -1730,10 +1733,10 @@ index 000000000000..171767871cf3
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
 new file mode 100644
-index 000000000000..635ed934dbcf
+index 000000000000..52d5aca851d1
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam57.c
-@@ -0,0 +1,2615 @@
+@@ -0,0 +1,2637 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM57 containing oax4000 ISP connected to OmniVision ox05b1s sensor.
@@ -1758,8 +1761,7 @@ index 000000000000..635ed934dbcf
 +#define V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR        (V4L2_CID_CUSTOM_BASE + 1)
 +#define V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR    (V4L2_CID_CUSTOM_BASE + 2)
 +#define V4L2_CID_CUSTOM_GAIN_IR                 (V4L2_CID_CUSTOM_BASE + 3)
-+#define V4L2_CID_CUSTOM_MODE_SELECT             (V4L2_CID_CUSTOM_BASE + 4)
-+#define V4L2_CID_CUSTOM_FSYNC_ENABLE            (V4L2_CID_CUSTOM_BASE + 5)
++#define V4L2_CID_CUSTOM_ENABLE_IR               (V4L2_CID_CUSTOM_BASE + 4)
 +
 +#define CAM57_NUM_STREAMS  2   /* Stream 0: VC0 (RGB), Stream 1: VC1 (IR) */
 +
@@ -2956,7 +2958,6 @@ index 000000000000..635ed934dbcf
 +	ret = i2c_transfer(client->adapter, msgs, 1);
 +	if (ret < 1)
 +		return -EIO;
-+	// dev_info(&client->dev, "update_reg16 %02x = %02x\n", reg, send[2]);
 +	return 0;
 +}
 +
@@ -2987,7 +2988,7 @@ index 000000000000..635ed934dbcf
 +static const struct cam57_mode supported_modes[] = {
 +	{
 +		.width = 2592,
-+		.height = 1944,
++		.height = 1946,
 +		.code = MEDIA_BUS_FMT_UYVY8_1X16,
 +		.index = 0,
 +		.payload = {
@@ -3006,7 +3007,7 @@ index 000000000000..635ed934dbcf
 +	},
 +	{
 +		.width = 1920,
-+		.height = 1080,
++		.height = 1082,
 +		.code = MEDIA_BUS_FMT_UYVY8_1X16,
 +		.index = 1,
 +		.payload = {
@@ -3236,7 +3237,6 @@ index 000000000000..635ed934dbcf
 +	if (ret)
 +		return ret;
 +
-+	// dev_info(&cam->client->dev, "cmd %*ph\n", (int)total_len, msg_data);
 +	if (msg_data[3] == OAX4000_SET_RESOLUTION) {
 +		msleep(100);
 +		return 0;
@@ -3470,6 +3470,12 @@ index 000000000000..635ed934dbcf
 +	return cam57_sensor_rw(cam, 0x3012, &reg_val, 1, true);
 +}
 +
++static int cam57_set_enable_ir(struct cam57_dev *cam, int val)
++{
++        dev_info(&cam->client->dev, "enable_ir %d\n", val);
++	return oax4000_write_8b_reg(cam->client, 0x4249, val ? 0xff : 0x00);
++}
++
 +/* -----------------------------------------------------------------------------
 + * Hardware Initialization Sequence
 + * -----------------------------------------------------------------------------
@@ -3537,7 +3543,6 @@ index 000000000000..635ed934dbcf
 +	if (ret)
 +		return ret;
 +
-+	// dev_info(&cam->client->dev, "isp_cmd %*ph\n", len, payload);
 +	return oax4000_check_cmd_status(cam);
 +}
 +
@@ -3780,11 +3785,18 @@ index 000000000000..635ed934dbcf
 +	if (cam->streaming == enable)
 +		return 0;
 +
-+	ret = cam57_sensor_write_reg(cam, 0x0100, enable);
-+	if (ret)
-+		return ret;
-+
-+	cam->streaming = enable;
++	if (enable) {
++		ret = cam57_sensor_write_reg(cam, 0x0100, 0x01);
++		if (ret)
++			return ret;
++		msleep(30);
++		cam->streaming = true;
++	} else {
++		ret = cam57_sensor_write_reg(cam, 0x0100, 0x01);
++		if (ret)
++			return ret;
++		cam->streaming = false;
++	}
 +	return 0;
 +}
 +
@@ -4040,6 +4052,9 @@ index 000000000000..635ed934dbcf
 +	case V4L2_CID_CUSTOM_GAIN_IR:
 +		cam->gain_ir = ctrl->val;
 +		break;
++	case V4L2_CID_CUSTOM_ENABLE_IR:
++		ret = cam57_set_enable_ir(cam, ctrl->val);
++		break;
 +	case V4L2_CID_POWER_LINE_FREQUENCY:
 +		ret = cam57_set_power_line_freq(cam, ctrl->val);
 +		break;
@@ -4091,6 +4106,16 @@ index 000000000000..635ed934dbcf
 +		.max = 255,
 +		.step = 1,
 +		.def = 16,
++	},
++	{
++		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_ENABLE_IR,
++		.name = "IR Enable",
++		.type = V4L2_CTRL_TYPE_INTEGER,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 1,
 +	},
 +};
 +
