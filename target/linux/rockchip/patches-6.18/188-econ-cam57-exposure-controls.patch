@@ -1,0 +1,445 @@
+media: econ-cam57: apply RGB/IR exposure clusters and restore mode after link recovery
+
+--- a/drivers/media/i2c/econ-cam57.c
++++ b/drivers/media/i2c/econ-cam57.c
+@@ -23,6 +23,16 @@
+ #define V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR    (V4L2_CID_CUSTOM_BASE + 2)
+ #define V4L2_CID_CUSTOM_GAIN_IR                 (V4L2_CID_CUSTOM_BASE + 3)
+ #define V4L2_CID_CUSTOM_ENABLE_IR               (V4L2_CID_CUSTOM_BASE + 4)
++
++/* IDs +2/+3 were raw mailbox values. Do not reuse them with new units. */
++#define V4L2_CID_CAM57_IR_EXPOSURE_TIME         (V4L2_CID_CUSTOM_BASE + 6)
++#define V4L2_CID_CAM57_IR_GAIN                  (V4L2_CID_CUSTOM_BASE + 7)
++
++/* Vendor ABI: exposure in 100 us, gain in vendor units (mailbox gain / 10). */
++#define CAM57_EXPOSURE_MAX 200
++#define CAM57_EXPOSURE_DEFAULT 65
++#define CAM57_GAIN_MAX 100
++#define CAM57_GAIN_DEFAULT 1
+ 
+ #define CAM57_NUM_STREAMS  2   /* Stream 0: VC0 (RGB), Stream 1: VC1 (IR) */
+ 
+@@ -1295,7 +1305,9 @@
+ 	
+ 	struct v4l2_ctrl_handler ctrls;
+ 	const struct cam57_mode *current_mode;
+-	u16 gain, gain_ir;
++	/* Mode is the master of each independent RGB/IR auto cluster. */
++	struct v4l2_ctrl *rgb_ctrls[3];
++	struct v4l2_ctrl *ir_ctrls[3];
+ 	u64 enabled_streams;
+ 	bool streaming;
+ 
+@@ -1338,8 +1350,11 @@
+ 			return ret;
+ 		if (val == OAX4000_STATUS_FINISH)
+ 			return 0;
+-		if (val != OAX4000_STATUS_ONGOING)
+-			return val;
++		/* RESET can be observed before the ISP starts processing the command. */
++		if (val != OAX4000_STATUS_ONGOING && val != OAX4000_STATUS_RESET) {
++			dev_err(&cam->client->dev, "ISP command failed: status 0x%02x\n", val);
++			return val == OAX4000_STATUS_TIMEOUT_ERR ? -ETIMEDOUT : -EIO;
++		}
+ 		usleep_range(1000, 2000);
+ 	} while (time_before(jiffies, timeout));
+ 	return -ETIMEDOUT;
+@@ -1502,6 +1517,7 @@
+ 		msleep(100);
+ 		return 0;
+ 	}
++	usleep_range(2000, 3000);
+ 	return oax4000_check_cmd_status(cam);
+ }
+ 
+@@ -1619,22 +1635,6 @@
+ 	return oax4000_send_mailbox_cmd(cam, buf, sizeof(buf));
+ }
+ 
+-static int cam57_set_contrast(struct cam57_dev *cam, s32 val)
+-{
+-	u8 buf[9] = {0};
+-
+-	if (val < 0 || val > 255)
+-		return -EINVAL;
+-
+-	buf[3] = 0x4D;
+-	buf[5] = 0x09;
+-	buf[6] = 0x10;
+-	buf[7] = 0x0A;
+-	buf[8] = 0x00;
+-
+-	return oax4000_send_mailbox_cmd(cam, buf, sizeof(buf));
+-}
+-
+ static int cam57_set_brightness(struct cam57_dev *cam, u8 brightness)
+ {
+ 	u8 buf[9] = {0};
+@@ -1657,6 +1657,9 @@
+ 	buf[7] = auto_exp ? 0x00 : 0x01;
+ 
+ 	if (!auto_exp) {
++		/* OX05B1S line period is 468 / 48 us for these ISP modes. */
++		exp_val = (u32)exp_val * 100 * 48 / 468;
++		gain_val *= 10;
+ 		buf[8]  = buf[10] = buf[12] = buf[14] = (exp_val >> 8) & 0xFF;
+ 		buf[9]  = buf[11] = buf[13] = buf[15] = exp_val & 0xFF;
+ 		buf[16] = buf[18] = buf[20] = buf[22] = (gain_val >> 8) & 0xFF;
+@@ -1676,6 +1679,9 @@
+ 	buf[7] = 0x00;
+ 
+ 	if (!auto_exp) {
++		/* OX05B1S line period is 468 / 48 us for these ISP modes. */
++		exp_val = (u32)exp_val * 100 * 48 / 468;
++		gain_val *= 10;
+ 		buf[58] = 0x01;
+ 		buf[59] = buf[61] = buf[63] = buf[65] = (exp_val >> 8) & 0xFF;
+ 		buf[60] = buf[62] = buf[64] = buf[66] = exp_val & 0xFF;
+@@ -1684,17 +1690,6 @@
+ 	}
+ 
+ 	return oax4000_send_mailbox_cmd(cam, buf, auto_exp ? 8 : sizeof(buf));
+-}
+-
+-static int cam57_set_power_line_freq(struct cam57_dev *cam, u8 freq_mode)
+-{
+-	u8 buf[7] = {0};
+-
+-	buf[3] = 0x54;
+-	buf[5] = 0x01;
+-	buf[6] = (freq_mode == 2) ? 0x33 : 0x30;
+-
+-	return oax4000_send_mailbox_cmd(cam, buf, sizeof(buf));
+ }
+ 
+ static int cam57_set_hflip(struct cam57_dev *cam, s32 val)
+@@ -1863,7 +1858,7 @@
+ 			ret = oax4000_send_isp_cmd(cam, payload, 9);
+ 			if (ret == 0)
+ 				break;
+-			if (ret == OAX4000_STATUS_ERR || ret == OAX4000_STATUS_RESET) {
++			if (ret == -EIO || ret == -ETIMEDOUT) {
+ 				msleep(50);
+ 				continue;
+ 			}
+@@ -1893,7 +1888,7 @@
+ 			return ret;
+ 
+ 		ret = oax4000_check_cmd_status(cam);
+-		if (ret == OAX4000_STATUS_ERR || ret == OAX4000_STATUS_RESET) {
++		if (ret == -EIO || ret == -ETIMEDOUT) {
+ 			msleep(50);
+ 			continue;
+ 		}
+@@ -2035,7 +2030,7 @@
+  * -----------------------------------------------------------------------------
+  */
+ 
+-static int cam57_s_stream(struct v4l2_subdev *sd, int enable)
++static int cam57_s_stream_locked(struct v4l2_subdev *sd, int enable)
+ {
+ 	struct cam57_dev *cam = to_cam57(sd);
+ 	int ret = 0;
+@@ -2061,6 +2056,17 @@
+ 	return 0;
+ }
+ 
++static int cam57_s_stream(struct v4l2_subdev *sd, int enable)
++{
++	struct cam57_dev *cam = to_cam57(sd);
++	int ret;
++
++	mutex_lock(cam->ctrls.lock);
++	ret = cam57_s_stream_locked(sd, enable);
++	mutex_unlock(cam->ctrls.lock);
++	return ret;
++}
++
+ static int cam57_enum_frame_size(struct v4l2_subdev *sd,
+ 				   struct v4l2_subdev_state *sd_state,
+ 				   struct v4l2_subdev_frame_size_enum *fse)
+@@ -2183,7 +2189,7 @@
+ 	return 0;
+ }
+ 
+-static int cam57_enable_streams(struct v4l2_subdev *sd,
++static int cam57_enable_streams_locked(struct v4l2_subdev *sd,
+ 				struct v4l2_subdev_state *state,
+ 				u32 pad, u64 streams_mask)
+ {
+@@ -2202,6 +2208,9 @@
+ 				ret);
+ 			return ret;
+ 		}
++		ret = __v4l2_ctrl_handler_setup(&cam->ctrls);
++		if (ret)
++			return ret;
+ 		ret = cam57_sensor_write_reg(cam, 0x0100, 0x01);
+ 		if (ret) {
+ 			dev_err(sd->dev, "Failed to start stream on 0x0100: %d\n", ret);
+@@ -2214,7 +2223,18 @@
+ 	return 0;
+ }
+ 
+-static int cam57_disable_streams(struct v4l2_subdev *sd,
++static int cam57_enable_streams(struct v4l2_subdev *sd, struct v4l2_subdev_state *state, u32 pad, u64 streams_mask)
++{
++	struct cam57_dev *cam = to_cam57(sd);
++	int ret;
++
++	mutex_lock(cam->ctrls.lock);
++	ret = cam57_enable_streams_locked(sd, state, pad, streams_mask);
++	mutex_unlock(cam->ctrls.lock);
++	return ret;
++}
++
++static int cam57_disable_streams_locked(struct v4l2_subdev *sd,
+ 				  struct v4l2_subdev_state *state,
+ 				  u32 pad, u64 streams_mask)
+ {
+@@ -2232,6 +2252,17 @@
+ 
+ 	cam->enabled_streams = enabled_streams;
+ 	return 0;
++}
++
++static int cam57_disable_streams(struct v4l2_subdev *sd, struct v4l2_subdev_state *state, u32 pad, u64 streams_mask)
++{
++	struct cam57_dev *cam = to_cam57(sd);
++	int ret;
++
++	mutex_lock(cam->ctrls.lock);
++	ret = cam57_disable_streams_locked(sd, state, pad, streams_mask);
++	mutex_unlock(cam->ctrls.lock);
++	return ret;
+ }
+ 
+ static const struct v4l2_mbus_framefmt cam57_def_fmt = {
+@@ -2289,35 +2320,19 @@
+ 	case V4L2_CID_SHARPNESS:
+ 		ret = cam57_set_sharpness(cam, ctrl->val);
+ 		break;
+-	case V4L2_CID_CONTRAST:
+-		ret = cam57_set_contrast(cam, ctrl->val);
+-		break;
+ 	case V4L2_CID_BRIGHTNESS:
+ 		ret = cam57_set_brightness(cam, ctrl->val);
+ 		break;
+ 	case V4L2_CID_EXPOSURE_AUTO:
+-		ret = cam57_set_exposure_rgb(cam, true, 0, 0);
+-		break;
+-	case V4L2_CID_EXPOSURE_ABSOLUTE:
+-		ret = cam57_set_exposure_rgb(cam, false, ctrl->val, cam->gain);
++		ret = cam57_set_exposure_rgb(cam, ctrl->val == V4L2_EXPOSURE_AUTO,
++					     cam->rgb_ctrls[1]->val, cam->rgb_ctrls[2]->val);
+ 		break;
+ 	case V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR:
+-		ret = cam57_set_exposure_ir(cam, true, 0, 0);
+-		break;
+-	case V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR:
+-		ret = cam57_set_exposure_ir(cam, false, ctrl->val, cam->gain_ir);
+-		break;
+-	case V4L2_CID_GAIN:
+-		cam->gain = ctrl->val;
+-		break;
+-	case V4L2_CID_CUSTOM_GAIN_IR:
+-		cam->gain_ir = ctrl->val;
++		ret = cam57_set_exposure_ir(cam, ctrl->val != 0,
++					    cam->ir_ctrls[1]->val, cam->ir_ctrls[2]->val);
+ 		break;
+ 	case V4L2_CID_CUSTOM_ENABLE_IR:
+ 		ret = cam57_set_enable_ir(cam, ctrl->val);
+-		break;
+-	case V4L2_CID_POWER_LINE_FREQUENCY:
+-		ret = cam57_set_power_line_freq(cam, ctrl->val);
+ 		break;
+ 	case V4L2_CID_HFLIP:
+ 		ret = cam57_set_hflip(cam, ctrl->val);
+@@ -2330,7 +2345,9 @@
+ 		break;
+ 	}
+ 
+-	return 0;
++	if (ret)
++		dev_err(&cam->client->dev, "control 0x%x value %d failed: %d\n", ctrl->id, ctrl->val, ret);
++	return ret;
+ }
+ 
+ static const struct v4l2_ctrl_ops cam57_ctrl_ops = {
+@@ -2350,23 +2367,23 @@
+ 	},
+ 	{
+ 		.ops = &cam57_ctrl_ops,
+-		.id = V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR,
+-		.name = "IR Exposure Absolute",
++		.id = V4L2_CID_CAM57_IR_EXPOSURE_TIME,
++		.name = "IR Exposure Time (100us)",
+ 		.type = V4L2_CTRL_TYPE_INTEGER,
+ 		.min = 1,
+-		.max = 0xFFFF,
++		.max = CAM57_EXPOSURE_MAX,
+ 		.step = 1,
+-		.def = 100,
++		.def = CAM57_EXPOSURE_DEFAULT,
+ 	},
+ 	{
+ 		.ops = &cam57_ctrl_ops,
+-		.id = V4L2_CID_CUSTOM_GAIN_IR,
+-		.name = "IR Global Gain",
++		.id = V4L2_CID_CAM57_IR_GAIN,
++		.name = "IR Gain",
+ 		.type = V4L2_CTRL_TYPE_INTEGER,
+ 		.min = 0,
+-		.max = 255,
++		.max = CAM57_GAIN_MAX,
+ 		.step = 1,
+-		.def = 16,
++		.def = CAM57_GAIN_DEFAULT,
+ 	},
+ 	{
+ 		.ops = &cam57_ctrl_ops,
+@@ -2387,38 +2404,43 @@
+ 
+         if (list_empty(&hdl->ctrls)) {
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
+-				  0, 255, 1, 128);
++				  0, 10, 1, 7);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
+-				  0, 255, 1, 128);
++				  0, 8, 1, 4);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
+-				  0, 255, 1, 128);
+-		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_CONTRAST,
+-				  0, 255, 1, 128);
+-		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_GAIN,
+-				  0, 255, 1, 16);
+-
+-		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
++				  0, 9, 1, 4);
++
++		cam->rgb_ctrls[2] = v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops,
++			V4L2_CID_GAIN, 0, CAM57_GAIN_MAX, 1, CAM57_GAIN_DEFAULT);
++
++		cam->rgb_ctrls[0] = v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_AUTO,
+ 				       V4L2_EXPOSURE_MANUAL, 0, V4L2_EXPOSURE_AUTO);
+-		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
+-				  1, 0xFFFF, 1, 100);
+-
+-		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
+-				       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
+-				       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++		cam->rgb_ctrls[1] = v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops,
++			V4L2_CID_EXPOSURE_ABSOLUTE, 1, CAM57_EXPOSURE_MAX,
++			1, CAM57_EXPOSURE_DEFAULT);
++
++
+ 
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
+ 
+-		for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++)
+-			v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
++		for (i = 0; i < ARRAY_SIZE(custom_ctrls); i++) {
++			struct v4l2_ctrl *ctrl = v4l2_ctrl_new_custom(hdl, &custom_ctrls[i], NULL);
++
++			if (i < ARRAY_SIZE(cam->ir_ctrls))
++				cam->ir_ctrls[i] = ctrl;
++		}
+ 
+ 		if (hdl->error) {
+ 			ret = hdl->error;
+ 			v4l2_ctrl_handler_free(hdl);
+ 			return ret;
+ 		}
+-	}
+-	return v4l2_ctrl_handler_setup(hdl);
++		/* No hardware readback: manual values are explicitly cached, not volatile. */
++		v4l2_ctrl_auto_cluster(3, cam->rgb_ctrls, V4L2_EXPOSURE_MANUAL, false);
++		v4l2_ctrl_auto_cluster(3, cam->ir_ctrls, 0, false);
++	}
++	return 0;
+ }
+ 
+ static int cam57_core_reset(struct v4l2_subdev *sd, u32 val)
+@@ -2431,10 +2453,12 @@
+ 	} else {
+ 		dev_warn(&cam->client->dev, "Link lost...\n");
+ 		cancel_delayed_work_sync(&cam->init_work);
+-		if (cam->initialized) {
+-			v4l2_ctrl_handler_free(&cam->ctrls);
+-			cam->initialized = false;
+-		}
++		/* Keep descriptors and cached state valid across link recovery. */
++		mutex_lock(cam->ctrls.lock);
++		cam->initialized = false;
++		cam->streaming = false;
++		/* Preserve requested streams; firmware restart loses the active mode. */
++		mutex_unlock(cam->ctrls.lock);
+         }
+ 	return 0;
+ }
+@@ -2503,17 +2527,34 @@
+ 		goto err_power_off;
+ 	}
+ 
+-	cam->initialized = true;
+-
+ 	ret = cam57_init_controls(cam);
+ 	if (ret) {
+ 		dev_err(dev, "Failed to initialize V4L2 controls: %d\n", ret);
+ 		goto err_power_off;
+ 	}
+ 
++	mutex_lock(cam->ctrls.lock);
++	cam->initialized = true;
++	/* Stream-off during a link outage clears enabled_streams under this lock.
++	 * Otherwise restore resolution/timing before cached exposure and gain.
++	 */
++	if (cam->enabled_streams)
++		ret = cam57_enable_streams_locked(&cam->sd, NULL, 0,
++						 cam->enabled_streams);
++	else
++		ret = __v4l2_ctrl_handler_setup(&cam->ctrls);
++	if (ret)
++		cam->initialized = false;
++	mutex_unlock(cam->ctrls.lock);
++	if (ret) {
++		dev_err(dev, "Failed to restore mode and controls: %d\n", ret);
++		goto err_power_off;
++	}
++
+ 	dev_info(dev, "CAM57 ISP / STURDeCAM57 deferred init complete\n");
+ 	return;
+ err_power_off:
++	cam->initialized = false;
+ 	oax4000_power_off(cam);
+ }
+ 
+@@ -2543,8 +2584,6 @@
+ 		return -ENOMEM;
+ 
+ 	cam->client  = client;
+-	cam->gain    = 16;
+-	cam->gain_ir = 16;
+ 	cam->current_mode = supported_modes;
+ 
+ 	INIT_DELAYED_WORK(&cam->init_work, cam57_init_work);
+@@ -2609,10 +2648,9 @@
+ 
+ 	v4l2_subdev_cleanup(sd);
+ 
+-	if (cam->initialized) {
+-		v4l2_ctrl_handler_free(&cam->ctrls);
++	v4l2_ctrl_handler_free(&cam->ctrls);
++	if (cam->initialized)
+ 		oax4000_power_off(cam);
+-	}
+ 
+ 	media_entity_cleanup(&sd->entity);
+ }
+@@ -2635,3 +2673,5 @@
+ 
+ MODULE_DESCRIPTION("e-Con CAM57 Driver");
+ MODULE_LICENSE("GPL");
++
++MODULE_VERSION("2.0");

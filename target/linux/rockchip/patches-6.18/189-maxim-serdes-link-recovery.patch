@@ -1,0 +1,59 @@
+media: maxim-serdes: restore active stream filters after link reset
+
+--- a/drivers/media/i2c/maxim-serdes/max_ser.c
++++ b/drivers/media/i2c/maxim-serdes/max_ser.c
+@@ -2194,6 +2194,32 @@
+ 	return 0;
+ }
+ 
++/* A link reset clears the filters while enabled streams remain cached. */
++static int max_ser_restore_state(struct max_ser_priv *priv)
++{
++	struct max_ser *ser = priv->ser;
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < ser->ops->num_pipes; i++) {
++		struct max_ser_pipe *pipe = &ser->pipes[i];
++
++		if (!pipe->enabled)
++			continue;
++
++		if (ser->ops->set_pipe_vcs) {
++			ret = ser->ops->set_pipe_vcs(ser, pipe, pipe->vcs);
++			if (ret)
++				return ret;
++		}
++		ret = max_ser_set_pipe_dts(priv, pipe, pipe->dts, pipe->num_dts);
++		if (ret)
++			return ret;
++	}
++
++	return 0;
++}
++
+ int max_ser_reset_sensor(struct v4l2_subdev *sd, u32 val)
+ {
+ 	struct max_ser_priv *priv;
+@@ -2210,9 +2236,19 @@
+ 	if (!sensor_sd || !sensor_sd->v4l2_dev)
+ 		return -ENODEV;
+ 
++	if (val) {
++		struct v4l2_subdev_state *state;
++		int ret;
++
++		state = v4l2_subdev_lock_and_get_active_state(sd);
++		ret = max_ser_restore_state(priv);
++		v4l2_subdev_unlock_state(state);
++		if (ret)
++			return ret;
++	}
++
+ 	dev_info(priv->dev, "Resetting camera %s\n", sensor_sd->name);
+-	v4l2_subdev_call(sensor_sd, core, reset, val);
+-	return 0;
++	return v4l2_subdev_call(sensor_sd, core, reset, val);
+ }
+ 
+ static int max_ser_read_reg(struct i2c_adapter *adapter, u8 addr,
