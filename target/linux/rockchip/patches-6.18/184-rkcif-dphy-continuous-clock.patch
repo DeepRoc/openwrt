@@ -1,0 +1,149 @@
+Subject: [PATCH] media: dw-mipi-csi2rx: configure RK3588 continuous clock reception
+
+A shared CSI transmitter can supply a continuous HS clock before an
+individual receiver starts. Propagate the endpoint clock mode to the PHY
+and configure RK3588's clock lane mode before enabling the receiver. This
+allows either receiver to start without cycling the transmitter's PHYs
+and interrupting a stream already running on another output.
+
+Keep the default submode unchanged for existing PHY consumers and limit
+the clock lane register access to RK3588. Preserve reserved register bits.
+
+Reference: Rockchip RK3588 TRM, CSI_DPHY_LANE_CK_MODE (offset 0x0128).
+https://github.com/rockchip-linux/kernel/blob/develop-6.1/drivers/phy/rockchip/phy-rockchip-csi2-dphy-hw.c
+
+---
+--- a/include/linux/phy/phy-mipi-dphy.h
++++ b/include/linux/phy/phy-mipi-dphy.h
+@@ -5,6 +5,18 @@
+ 
+ #ifndef __PHY_MIPI_DPHY_H_
+ #define __PHY_MIPI_DPHY_H_
++
++/**
++ * enum phy_mipi_dphy_submode - Clock lane mode for phy_set_mode_ext()
++ * @PHY_MIPI_DPHY_SUBMODE_DEFAULT: Leave the PHY's default clock mode unchanged.
++ * @PHY_MIPI_DPHY_SUBMODE_CONTINUOUS: The transmitter uses a continuous HS clock.
++ * @PHY_MIPI_DPHY_SUBMODE_NONCONTINUOUS: The clock lane enters LP between bursts.
++ */
++enum phy_mipi_dphy_submode {
++	PHY_MIPI_DPHY_SUBMODE_DEFAULT,
++	PHY_MIPI_DPHY_SUBMODE_CONTINUOUS,
++	PHY_MIPI_DPHY_SUBMODE_NONCONTINUOUS,
++};
+ 
+ /**
+  * struct phy_configure_opts_mipi_dphy - MIPI D-PHY configuration set
+--- a/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
++++ b/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+@@ -118,6 +118,7 @@
+ 
+ 	enum v4l2_mbus_type bus_type;
+ 	u32 lanes_num;
++	u32 bus_flags;
+ 	u64 enabled_streams;
+ 
+ 	const struct dw_mipi_csi2rx_drvdata *drvdata;
+@@ -387,7 +388,10 @@
+ 		if (ret)
+ 			return ret;
+ 
+-		ret = phy_set_mode(csi2->phy, PHY_MODE_MIPI_DPHY);
++		ret = phy_set_mode_ext(csi2->phy, PHY_MODE_MIPI_DPHY,
++			csi2->bus_flags & V4L2_MBUS_CSI2_NONCONTINUOUS_CLOCK ?
++			PHY_MIPI_DPHY_SUBMODE_NONCONTINUOUS :
++			PHY_MIPI_DPHY_SUBMODE_CONTINUOUS);
+ 		if (ret)
+ 			return ret;
+ 
+@@ -778,6 +782,7 @@
+ 
+ 	csi2->bus_type = vep.bus_type;
+ 	csi2->lanes_num = vep.bus.mipi_csi2.num_data_lanes;
++	csi2->bus_flags = vep.bus.mipi_csi2.flags;
+ 
+ 	v4l2_async_subdev_nf_init(ntf, sd);
+ 	ntf->ops = &dw_mipi_csi2rx_notifier_ops;
+--- a/drivers/phy/rockchip/phy-rockchip-inno-csidphy.c
++++ b/drivers/phy/rockchip/phy-rockchip-inno-csidphy.c
+@@ -49,6 +49,10 @@
+ #define CSIDPHY_CTRL_DIG_RST_UNDEFINED		0x1e
+ #define CSIDPHY_CTRL_DIG_RST_RESET		BIT(0)
+ 
++/* RK3588 clock lane receive mode. */
++#define CSIDPHY_CLK_MODE				0x128
++#define CSIDPHY_CLK_MODE_CONTINUOUS		GENMASK(5, 4)
++
+ /* offset after ths_settle_offset */
+ #define CSIDPHY_CLK_THS_SETTLE			0
+ #define CSIDPHY_LANE_THS_SETTLE(n)		(((n) + 1) * 0x80)
+@@ -134,6 +138,7 @@
+ 	int pwrctl_offset;
+ 	int ths_settle_offset;
+ 	int calib_offset;
++	bool has_clk_mode;
+ 	const struct hsfreq_range *hsfreq_ranges;
+ 	int num_hsfreq_ranges;
+ 	const struct dphy_reg *grf_regs;
+@@ -151,6 +156,7 @@
+ 	const struct dphy_drv_data *drv_data;
+ 	struct phy_configure_opts_mipi_dphy config;
+ 	u8 hsfreq;
++	enum phy_mipi_dphy_submode clock_mode;
+ };
+ 
+ static inline void write_grf_reg(struct rockchip_inno_csidphy *priv,
+@@ -242,6 +248,20 @@
+ 	return 0;
+ }
+ 
++static int rockchip_inno_csidphy_set_mode(struct phy *phy, enum phy_mode mode,
++					int submode)
++{
++	struct rockchip_inno_csidphy *priv = phy_get_drvdata(phy);
++
++	if (mode != PHY_MODE_MIPI_DPHY ||
++	    submode < PHY_MIPI_DPHY_SUBMODE_DEFAULT ||
++	    submode > PHY_MIPI_DPHY_SUBMODE_NONCONTINUOUS)
++		return -EINVAL;
++
++	priv->clock_mode = submode;
++	return 0;
++}
++
+ static int rockchip_inno_csidphy_power_on(struct phy *phy)
+ {
+ 	struct rockchip_inno_csidphy *priv = phy_get_drvdata(phy);
+@@ -283,6 +303,16 @@
+ 	       priv->phy_base + CSIDPHY_CTRL_DIG_RST);
+ 	writel(CSIDPHY_CTRL_DIG_RST_UNDEFINED + CSIDPHY_CTRL_DIG_RST_RESET,
+ 	       priv->phy_base + CSIDPHY_CTRL_DIG_RST);
++
++	/* A shared transmitter may already be supplying an HS clock. */
++	if (drv_data->has_clk_mode &&
++	    priv->clock_mode != PHY_MIPI_DPHY_SUBMODE_DEFAULT) {
++		val = readl(priv->phy_base + CSIDPHY_CLK_MODE);
++		val &= ~CSIDPHY_CLK_MODE_CONTINUOUS;
++		if (priv->clock_mode == PHY_MIPI_DPHY_SUBMODE_CONTINUOUS)
++			val |= CSIDPHY_CLK_MODE_CONTINUOUS;
++		writel(val, priv->phy_base + CSIDPHY_CLK_MODE);
++	}
+ 
+ 	/* not into receive mode/wait stopstate */
+ 	write_grf_reg(priv, GRF_DPHY_CSIPHY_FORCERXMODE, 0x0);
+@@ -356,6 +386,7 @@
+ 	.init		= rockchip_inno_csidphy_init,
+ 	.exit		= rockchip_inno_csidphy_exit,
+ 	.configure	= rockchip_inno_csidphy_configure,
++	.set_mode	= rockchip_inno_csidphy_set_mode,
+ 	.owner		= THIS_MODULE,
+ };
+ 
+@@ -404,6 +435,7 @@
+ };
+ 
+ static const struct dphy_drv_data rk3588_mipidphy_drv_data = {
++	.has_clk_mode = true,
+ 	.pwrctl_offset = -1,
+ 	.ths_settle_offset = RK3568_CSIDPHY_CLK_WR_THS_SETTLE,
+ 	.calib_offset = RK3568_CSIDPHY_CLK_CALIB_EN,

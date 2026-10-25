@@ -4282,10 +4282,10 @@ index 000000000000..3dcdb63dbb9e
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max96717.c b/drivers/media/i2c/maxim-serdes/max96717.c
 new file mode 100644
-index 000000000000..93af16711bcd
+index 000000000000..83d5a23e0218
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max96717.c
-@@ -0,0 +1,1715 @@
+@@ -0,0 +1,1731 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Maxim MAX96717 GMSL2 Serializer Driver
@@ -4304,6 +4304,7 @@ index 000000000000..93af16711bcd
 +#include <linux/pinctrl/pinconf-generic.h>
 +#include <linux/regmap.h>
 +
++#include "max_des.h"
 +#include "max_ser.h"
 +
 +#define MAX96717_REG0				0x0
@@ -4433,7 +4434,6 @@ index 000000000000..93af16711bcd
 +
 +#define MAX96717_MIPI_RX1			0x331
 +#define MAX96717_MIPI_RX1_CTRL_NUM_LANES	GENMASK(5, 4)
-+#define MAX96717_MIPI_RX1_DESKEW_EN		BIT(6)
 +
 +#define MAX96717_MIPI_RX2			0x332
 +#define MAX96717_MIPI_RX2_PHY1_LANE_MAP		GENMASK(7, 4)
@@ -5223,6 +5223,22 @@ index 000000000000..93af16711bcd
 +	unsigned int i;
 +	int ret;
 +
++	/* Older board descriptions omit the serializer's CSI endpoint lanes. */
++	if (!num_data_lanes) {
++		ret = regmap_read(priv->regmap, MAX96717_MIPI_RX1, &val);
++		if (ret)
++			return ret;
++		num_data_lanes =
++			FIELD_GET(MAX96717_MIPI_RX1_CTRL_NUM_LANES, val) + 1;
++		dev_info(priv->dev,
++			 "CSI lanes unspecified; preserving receiver setup (%u lanes)\n",
++			 num_data_lanes);
++		return 0;
++	}
++
++	if (num_data_lanes > 4)
++		return -EINVAL;
++
 +	if (num_data_lanes == 3 && !priv->info->supports_3_data_lanes) {
 +		dev_err(priv->dev, "Unsupported 3 data lane mode\n");
 +		return -EINVAL;
@@ -5234,15 +5250,10 @@ index 000000000000..93af16711bcd
 +		return -EINVAL;
 +	}
 +
-+	/*
-+	 * Configure the lane count and deskew
-+	 * The max9295a has two MIPI-CSI ports in the upper and lower 4-bits of MIPI_RX1.
-+	 * Configure both even though the max92717 has the lower 4-bits RSVD.
-+	 */
++	/* Configure port B's lane count without changing unrelated RX fields. */
 +	val = FIELD_PREP(MAX96717_MIPI_RX1_CTRL_NUM_LANES, num_data_lanes - 1);
-+	val |= MAX96717_MIPI_RX1_DESKEW_EN;
-+	val |= (val >> 4);
-+	ret = regmap_write(priv->regmap, MAX96717_MIPI_RX1, val);
++	ret = regmap_update_bits(priv->regmap, MAX96717_MIPI_RX1,
++				 MAX96717_MIPI_RX1_CTRL_NUM_LANES, val);
 +	if (ret)
 +		return ret;
 +
@@ -5895,6 +5906,11 @@ index 000000000000..93af16711bcd
 +	struct max_ser_ops *ops;
 +	int ret;
 +
++	/* A retained I2C alias does not mean the link reset has completed. */
++	ret = max_des_wait_for_serializer(client);
++	if (ret)
++		return ret;
++
 +	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 +	if (!priv)
 +		return -ENOMEM;
@@ -5961,7 +5977,7 @@ index 000000000000..93af16711bcd
 +	.num_dts_per_pipe = 2,
 +	.pipe_hw_ids = { 0, 1, 2, 3 },
 +	.num_phys = 1,
-+	.phy_hw_ids = { 0 },
++	.phy_hw_ids = { 1 },
 +};
 +
 +static const struct max96717_chip_info max96717_info = {
@@ -7294,10 +7310,10 @@ index 000000000000..bcee071778b0
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max_des.c b/drivers/media/i2c/maxim-serdes/max_des.c
 new file mode 100644
-index 000000000000..099be139dad3
+index 000000000000..d1a7d4e5ddd4
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_des.c
-@@ -0,0 +1,3509 @@
+@@ -0,0 +1,3523 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Maxim GMSL2 Deserializer Driver
@@ -7308,7 +7324,9 @@ index 000000000000..099be139dad3
 +#include <linux/delay.h>
 +#include <linux/i2c-atr.h>
 +#include <linux/i2c-mux.h>
++#include <linux/list.h>
 +#include <linux/module.h>
++#include <linux/mutex.h>
 +#include <linux/property.h>
 +#include <linux/regulator/consumer.h>
 +#include <linux/units.h>
@@ -7344,7 +7362,6 @@ index 000000000000..099be139dad3
 +	struct regulator **pocs;
 +	struct max_serdes_source *sources;
 +	u64 *streams_masks;
-+	unsigned long active_phys;
 +
 +	struct notifier_block i2c_nb;
 +	struct v4l2_subdev sd;
@@ -7356,7 +7373,51 @@ index 000000000000..099be139dad3
 +	struct delayed_work link_monitor_work;
 +	unsigned int active_links;
 +	int inactive_poll_count;
++	struct list_head serializer_hosts;
 +};
++
++static LIST_HEAD(max_des_serializer_hosts);
++static DEFINE_MUTEX(max_des_serializer_hosts_lock);
++
++/* Only adapters owned by this framework participate in link readiness. */
++int max_des_wait_for_serializer(struct i2c_client *client)
++{
++	struct device *parent = client->adapter->dev.parent;
++	struct max_des_priv *priv;
++	unsigned int link_id;
++	int ret = 0;
++
++	mutex_lock(&max_des_serializer_hosts_lock);
++	list_for_each_entry(priv, &max_des_serializer_hosts, serializer_hosts) {
++		if (parent != priv->dev || !priv->atr)
++			continue;
++
++		ret = device_property_read_u32(&client->adapter->dev, "reg", &link_id);
++		if (ret)
++			break;
++		if (link_id >= priv->des->info->num_links) {
++			ret = -EINVAL;
++			break;
++		}
++		/* Paired with publication after serializer address setup. */
++		if (!smp_load_acquire(&priv->des->links[link_id].ser_xlate.en))
++			ret = -EPROBE_DEFER;
++		break;
++	}
++	mutex_unlock(&max_des_serializer_hosts_lock);
++
++	return ret;
++}
++EXPORT_SYMBOL_NS_GPL(max_des_wait_for_serializer, "MAX_SERDES");
++
++static void max_des_unregister_serializer_host(void *data)
++{
++	struct max_des_priv *priv = data;
++
++	mutex_lock(&max_des_serializer_hosts_lock);
++	list_del(&priv->serializer_hosts);
++	mutex_unlock(&max_des_serializer_hosts_lock);
++}
 +
 +struct max_des_remap_context {
 +	enum max_serdes_gmsl_mode mode;
@@ -8729,8 +8790,8 @@ index 000000000000..099be139dad3
 +				return ret;
 +		}
 +
-+		/* Keep unused outputs idle until their CSI receiver is ready. */
-+		ret = des->ops->set_phy_enable(des, phy, false);
++		/* Keep output PHYs stable while other CSI streams are active. */
++		ret = des->ops->set_phy_enable(des, phy, phy->enabled);
 +		if (ret)
 +			return ret;
 +	}
@@ -8870,6 +8931,7 @@ index 000000000000..099be139dad3
 +	}
 +
 +	dev = device_find_child(&adapter->dev, &addr, i2c_client_addr_match);
++	put_device(&adapter->dev);
 +	if (!dev) {
 +		dev_err(priv->dev, "child not found for for %x\n", addr);
 +		return NULL;
@@ -8952,7 +9014,8 @@ index 000000000000..099be139dad3
 +	}
 +
 +	link->version = i;
-+	link->ser_xlate.en = true;
++	/* Publish readiness only after reset, readdressing and link setup. */
++	smp_store_release(&link->ser_xlate.en, true);
 +out_select_links:
 +	mask = max_des_enabled_links_mask(des);
 +	if (des->ops->select_links) {
@@ -9673,34 +9736,6 @@ index 000000000000..099be139dad3
 +	return 0;
 +}
 +
-+static int max_des_update_phys(struct max_des_priv *priv, u64 *streams_masks,
-+			       bool enable)
-+{
-+	struct max_des *des = priv->des;
-+	unsigned int i;
-+	int ret;
-+
-+	for (i = 0; i < des->info->num_phys; i++) {
-+		struct max_des_phy *phy = &des->phys[i];
-+		u32 pad = max_des_phy_to_pad(des, phy);
-+		bool active = phy->enabled && streams_masks[pad];
-+
-+		if (active != enable || !!(priv->active_phys & BIT(i)) == active)
-+			continue;
-+
-+		ret = des->ops->set_phy_enable(des, phy, active);
-+		if (ret)
-+			return ret;
-+
-+		if (active)
-+			priv->active_phys |= BIT(i);
-+		else
-+			priv->active_phys &= ~BIT(i);
-+	}
-+
-+	return 0;
-+}
-+
 +static int max_des_update_active(struct max_des_priv *priv, u64 *streams_masks,
 +				 bool expected_active)
 +{
@@ -9836,25 +9871,17 @@ index 000000000000..099be139dad3
 +	if (ret)
 +		goto err_revert_streams_disable;
 +
-+	ret = max_des_update_phys(priv, streams_masks, false);
-+	if (ret)
-+		goto err_revert_phys_disable;
-+
 +	ret = max_des_update_links(priv, &context, state, streams_masks);
 +	if (ret)
-+		goto err_revert_phys_disable;
++		goto err_revert_active_disable;
 +
 +	ret = max_des_update_tpg(priv, state, streams_masks);
 +	if (ret)
 +		goto err_revert_links_update;
 +
-+	ret = max_des_update_phys(priv, streams_masks, true);
-+	if (ret)
-+		goto err_revert_phys_enable;
-+
 +	ret = max_des_update_active(priv, streams_masks, true);
 +	if (ret)
-+		goto err_revert_phys_enable;
++		goto err_revert_tpg_update;
 +
 +	if (enable) {
 +		ret = max_des_enable_disable_streams(priv, state, pad,
@@ -9871,17 +9898,13 @@ index 000000000000..099be139dad3
 +err_revert_active_enable:
 +	max_des_update_active(priv, priv->streams_masks, false);
 +
-+err_revert_phys_enable:
-+	max_des_update_phys(priv, priv->streams_masks, false);
-+
++err_revert_tpg_update:
 +	max_des_update_tpg(priv, state, priv->streams_masks);
 +
 +err_revert_links_update:
 +	max_des_update_links(priv, &context, state, priv->streams_masks);
 +
-+err_revert_phys_disable:
-+	max_des_update_phys(priv, priv->streams_masks, true);
-+
++err_revert_active_disable:
 +	max_des_update_active(priv, priv->streams_masks, true);
 +
 +err_revert_streams_disable:
@@ -10665,28 +10688,28 @@ index 000000000000..099be139dad3
 +					priv->active_links &= ~BIT(link_id);
 +					goto reschedule;
 +				}
-+				// Wait for deferred probe of serializer to complete before attaching other clients.
++				/* Serialize with probe and require a fully bound driver. */
 +				if (i == 0) {
-+					struct i2c_client *ser_client = max_des_find_ser_client(priv, link_id, link->powerup_addr);
-+					int timeout = 25;
++					struct i2c_client *ser_client;
 +
-+					while (timeout > 0 && !i2c_get_clientdata(ser_client)) {
-+						if (timeout == 25) {
-+							ret = device_reprobe(&ser_client->dev);
-+							if (ret)
-+								break;
-+						}
-+						msleep(10);
-+						--timeout;
-+					}
-+					if (timeout == 0)
-+						ret = -ETIMEDOUT;
-+					if (ret) {
++					ser_client = max_des_find_ser_client(priv, link_id,
++									    link->powerup_addr);
++					if (!ser_client) {
 +						priv->active_links &= ~BIT(link_id);
-+						dev_warn(&ser_client->dev, "reprobe of serializer failed: %d\n", ret);
++						goto reschedule;
++					}
++
++					ret = device_attach(&ser_client->dev);
++					if (ret <= 0) {
++						priv->active_links &= ~BIT(link_id);
++						dev_warn(&ser_client->dev,
++							 "Serializer driver is not ready: %d\n",
++							 ret);
++						put_device(&ser_client->dev);
 +						goto reschedule;
 +					}
 +					link->serializer = ser_client;
++					put_device(&ser_client->dev);
 +				}
 +			}
 +			struct v4l2_subdev *sd = priv->sources[link_id].sd;
@@ -10761,6 +10784,13 @@ index 000000000000..099be139dad3
 +	if (ret)
 +		goto err_put_source_ep_fwnodes;
 +
++	mutex_lock(&max_des_serializer_hosts_lock);
++	list_add_tail(&priv->serializer_hosts, &max_des_serializer_hosts);
++	mutex_unlock(&max_des_serializer_hosts_lock);
++	ret = devm_add_action_or_reset(dev, max_des_unregister_serializer_host, priv);
++	if (ret)
++		goto err_disable_pocs;
++
 +	ret = max_des_i2c_adapter_init(priv);
 +	if (ret)
 +		goto err_disable_pocs;
@@ -10809,10 +10839,10 @@ index 000000000000..099be139dad3
 +MODULE_IMPORT_NS("I2C_ATR");
 diff --git a/drivers/media/i2c/maxim-serdes/max_des.h b/drivers/media/i2c/maxim-serdes/max_des.h
 new file mode 100644
-index 000000000000..359d54dacdb3
+index 000000000000..4e1449e238e7
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_des.h
-@@ -0,0 +1,168 @@
+@@ -0,0 +1,170 @@
 +/* SPDX-License-Identifier: GPL-2.0 */
 +/*
 + * Copyright (C) 2025 Analog Devices Inc.
@@ -10977,6 +11007,8 @@ index 000000000000..359d54dacdb3
 +int max_des_probe(struct i2c_client *client, struct max_des *des);
 +
 +int max_des_remove(struct max_des *des);
++
++int max_des_wait_for_serializer(struct i2c_client *client);
 +
 +int max_des_phy_hw_data_lanes(struct max_des *des, struct max_des_phy *phy);
 +
