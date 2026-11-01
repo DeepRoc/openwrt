@@ -1,0 +1,148 @@
+media: econ-cam57: fix control errors, saturation and IR exposure initialization
+
+Preserve the existing IR control IDs, raw units, ranges and defaults. Userspace
+stages gain first and writes exposure to apply both in manual mode. Repeated
+exposure writes must reach the driver so gain-only changes are not skipped.
+Automatic requests must also be sent even when their cached value matches.
+Register IR automatic exposure after the manual controls so control setup
+finishes in automatic mode.
+
+Return the existing control callback result instead of discarding errors.
+Match saturation's advertised range to its 0..10 lookup table and use the
+vendor default of 7, replacing the invalid default of 128.
+
+Use the existing status checker to wait through RESET and ONGOING. Keep raw
+firmware error statuses for flash retry decisions; translate them to negative
+errors in the control mailbox sender. No IR-specific polling or delay is needed.
+
+Leave power-line frequency control registration commented out, as in the vendor
+source. The tested firmware rejects the 50 Hz default with status 0x55, aborting
+control setup. Command support needs verification before exposing this control.
+
+Keep the control handler alive across link loss so reconnection can reapply its
+controls. Release it unconditionally on driver removal, including while offline.
+
+IR units and RGB exposure commands are unchanged. Unit conversion belongs to
+the userspace camera adapter. CAM31 and stream configuration are unchanged.
+
+--- a/drivers/media/i2c/econ-cam57.c
++++ b/drivers/media/i2c/econ-cam57.c
+@@ -1338,7 +1338,8 @@
+ 			return ret;
+ 		if (val == OAX4000_STATUS_FINISH)
+ 			return 0;
+-		if (val != OAX4000_STATUS_ONGOING)
++		if (val != OAX4000_STATUS_ONGOING &&
++		    val != OAX4000_STATUS_RESET)
+ 			return val;
+ 		usleep_range(1000, 2000);
+ 	} while (time_before(jiffies, timeout));
+@@ -1502,7 +1503,10 @@
+ 		msleep(100);
+ 		return 0;
+ 	}
+-	return oax4000_check_cmd_status(cam);
++	ret = oax4000_check_cmd_status(cam);
++	if (ret > 0)
++		return ret == OAX4000_STATUS_TIMEOUT_ERR ? -ETIMEDOUT : -EIO;
++	return ret;
+ }
+ 
+ static int cam57_sensor_rw(struct cam57_dev *cam, u16 reg, u8 *idata, u16 count, bool is_write)
+@@ -2330,7 +2334,7 @@
+ 		break;
+ 	}
+ 
+-	return 0;
++	return ret;
+ }
+ 
+ static const struct v4l2_ctrl_ops cam57_ctrl_ops = {
+@@ -2338,21 +2342,13 @@
+ };
+ 
+ static const struct v4l2_ctrl_config custom_ctrls[] = {
+-	{
+-		.ops = &cam57_ctrl_ops,
+-		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
+-		.name = "IR Auto Exposure",
+-		.type = V4L2_CTRL_TYPE_BOOLEAN,
+-		.min = 0,
+-		.max = 1,
+-		.step = 1,
+-		.def = 1,
+-	},
+ 	{
+ 		.ops = &cam57_ctrl_ops,
+ 		.id = V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR,
+ 		.name = "IR Exposure Absolute",
+ 		.type = V4L2_CTRL_TYPE_INTEGER,
++		/* Reapply exposure to commit a changed gain even when time is unchanged. */
++		.flags = V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
+ 		.min = 1,
+ 		.max = 0xFFFF,
+ 		.step = 1,
+@@ -2370,6 +2366,18 @@
+ 	},
+ 	{
+ 		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
++		.name = "IR Auto Exposure",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		/* Apply auto after manual defaults, even if the cached value matches. */
++		.flags = V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 1,
++	},
++	{
++		.ops = &cam57_ctrl_ops,
+ 		.id = V4L2_CID_CUSTOM_ENABLE_IR,
+ 		.name = "IR Enable",
+ 		.type = V4L2_CTRL_TYPE_INTEGER,
+@@ -2387,7 +2395,7 @@
+ 
+         if (list_empty(&hdl->ctrls)) {
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
+-				  0, 255, 1, 128);
++				  0, 10, 1, 7);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
+ 				  0, 255, 1, 128);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
+@@ -2402,9 +2410,13 @@
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
+ 				  1, 0xFFFF, 1, 100);
+ 
+-		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
+-				       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
+-				       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++		/*
++		 * Tested firmware rejects the 50 Hz default (status 0x55).
++		 *
++		 * v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
++		 *                       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
++		 *                       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++		 */
+ 
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+ 		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
+@@ -2432,7 +2444,6 @@
+ 		dev_warn(&cam->client->dev, "Link lost...\n");
+ 		cancel_delayed_work_sync(&cam->init_work);
+ 		if (cam->initialized) {
+-			v4l2_ctrl_handler_free(&cam->ctrls);
+ 			cam->initialized = false;
+ 		}
+         }
+@@ -2609,8 +2620,9 @@
+ 
+ 	v4l2_subdev_cleanup(sd);
+ 
++	v4l2_ctrl_handler_free(&cam->ctrls);
++
+ 	if (cam->initialized) {
+-		v4l2_ctrl_handler_free(&cam->ctrls);
+ 		oax4000_power_off(cam);
+ 	}
+ 
