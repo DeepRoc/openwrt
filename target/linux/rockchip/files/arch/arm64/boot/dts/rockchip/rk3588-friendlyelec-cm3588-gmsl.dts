@@ -212,29 +212,40 @@
 		regulator-always-on;
 	};
 
-	rknn_opp_table: npu-opp-table {
+	npu_opp_table: npu-opp-table {
 		compatible = "operating-points-v2";
-		opp-shared;
 
-		opp-200000000 {
-			opp-hz = /bits/ 64 <200000000>;
-			opp-microvolt = <750000>;
+		opp-300000000 {
+			opp-hz = /bits/ 64 <300000000>;
+			opp-microvolt = <675000 675000 850000>;
 		};
 		opp-400000000 {
 			opp-hz = /bits/ 64 <400000000>;
-			opp-microvolt = <750000>;
+			opp-microvolt = <675000 675000 850000>;
+		};
+		opp-500000000 {
+			opp-hz = /bits/ 64 <500000000>;
+			opp-microvolt = <675000 675000 850000>;
 		};
 		opp-600000000 {
 			opp-hz = /bits/ 64 <600000000>;
-			opp-microvolt = <800000>;
+			opp-microvolt = <675000 675000 850000>;
+		};
+		opp-700000000 {
+			opp-hz = /bits/ 64 <700000000>;
+			opp-microvolt = <700000 700000 850000>;
 		};
 		opp-800000000 {
 			opp-hz = /bits/ 64 <800000000>;
-			opp-microvolt = <850000>;
+			opp-microvolt = <750000 750000 850000>;
+		};
+		opp-900000000 {
+			opp-hz = /bits/ 64 <900000000>;
+			opp-microvolt = <800000 800000 850000>;
 		};
 		opp-1000000000 {
 			opp-hz = /bits/ 64 <1000000000>;
-			opp-microvolt = <875000>;
+			opp-microvolt = <850000 850000 1000000>;
 		};
 	};
 };
@@ -1104,33 +1115,65 @@
 	status = "okay";
 };
 
-/* Enable Rockchip NPU cores */
+#ifndef SCMI_CLK_NPU
+#define SCMI_CLK_NPU 6
+#endif
+
+/*
+ * Convert rknn_core_0 (/npu@fdab0000) into the vendor RKNPU node.
+ */
 &rknn_core_0 {
-	operating-points-v2 = <&rknn_opp_table>;
-	npu-supply = <&vdd_npu_s0>;
-	status = "okay";
-};
+	compatible = "rockchip,rk3588-rknpu";
 
-&rknn_mmu_0 {
-	status = "okay";
-};
+	reg = <0x0 0xfdab0000 0x0 0x10000>,
+	      <0x0 0xfdac0000 0x0 0x10000>,
+	      <0x0 0xfdad0000 0x0 0x10000>;
 
-&rknn_core_1 {
-	operating-points-v2 = <&rknn_opp_table>;
-	npu-supply = <&vdd_npu_s0>;
-	status = "okay";
-};
+	/*
+	 * Mainline RK3588 uses arm,gic-v3 with #interrupt-cells = 4
+	 * (the vendor BSP GIC uses 3-cell specs — do not copy verbatim).
+	 * 4th cell is PPI affinity, 0 for SPIs (all CPUs).
+	 */
+	interrupts = <GIC_SPI 110 IRQ_TYPE_LEVEL_HIGH 0>,
+	             <GIC_SPI 111 IRQ_TYPE_LEVEL_HIGH 0>,
+	             <GIC_SPI 112 IRQ_TYPE_LEVEL_HIGH 0>;
+	interrupt-names = "npu0_irq", "npu1_irq", "npu2_irq";
 
-&rknn_mmu_1 {
-	status = "okay";
-};
+	clocks = <&scmi_clk SCMI_CLK_NPU>,
+	         <&cru ACLK_NPU0>,
+	         <&cru ACLK_NPU1>,
+	         <&cru ACLK_NPU2>,
+	         <&cru HCLK_NPU0>,
+	         <&cru HCLK_NPU1>,
+	         <&cru HCLK_NPU2>,
+	         <&cru PCLK_NPU_ROOT>;
+	clock-names = "scmi_clk", "aclk0", "aclk1", "aclk2",
+	              "hclk0", "hclk1", "hclk2", "pclk";
 
-&rknn_core_2 {
-	operating-points-v2 = <&rknn_opp_table>;
-	npu-supply = <&vdd_npu_s0>;
-	status = "okay";
-};
+	resets = <&cru SRST_A_RKNN0>,
+	         <&cru SRST_A_RKNN1>,
+	         <&cru SRST_A_RKNN2>,
+	         <&cru SRST_H_RKNN0>,
+	         <&cru SRST_H_RKNN1>,
+	         <&cru SRST_H_RKNN2>;
+	reset-names = "srst_a0", "srst_a1", "srst_a2",
+	              "srst_h0", "srst_h1", "srst_h2";
 
-&rknn_mmu_2 {
+	power-domains = <&power RK3588_PD_NPUTOP>,
+	                <&power RK3588_PD_NPU1>,
+	                <&power RK3588_PD_NPU2>;
+	power-domain-names = "npu0", "npu1", "npu2";
+
+	/*
+	 * Vendor driver looks for "rknpu-supply" / "mem-supply" via
+	 * devm_regulator_get_optional(dev, "rknpu"/"mem").
+	 * Both map to vdd_npu_s0 on the Orange Pi 5 Pro (same regulator
+	 * the mainline DT labelled "npu-supply" / "sram-supply").
+	 */
+	rknpu-supply = <&vdd_npu_s0>;
+	mem-supply = <&vdd_npu_s0>;
+
+	operating-points-v2 = <&npu_opp_table>;
+
 	status = "okay";
 };

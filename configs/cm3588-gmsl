@@ -4298,8 +4298,9 @@ CONFIG_PACKAGE_kmod-drm-kms-helper=y
 # CONFIG_PACKAGE_kmod-drm-panel-simple is not set
 # CONFIG_PACKAGE_kmod-drm-panel-tc358762 is not set
 CONFIG_PACKAGE_kmod-drm-panthor=y
+CONFIG_PACKAGE_kmod-drm-rknpu=y
 CONFIG_PACKAGE_kmod-drm-rockchip=y
-CONFIG_PACKAGE_kmod-drm-rocket=y
+# CONFIG_PACKAGE_kmod-drm-rocket is not set
 CONFIG_PACKAGE_kmod-drm-sched=y
 CONFIG_PACKAGE_kmod-drm-shmem-helper=y
 # CONFIG_PACKAGE_kmod-drm-ttm is not set
@@ -5714,7 +5715,7 @@ CONFIG_PACKAGE_libmesa-softpipe=m
 CONFIG_PACKAGE_libpango=y
 CONFIG_PACKAGE_libseat=y
 # CONFIG_PACKAGE_libteflon-etnaviv is not set
-CONFIG_PACKAGE_libteflon-rocket=y
+# CONFIG_PACKAGE_libteflon-rocket is not set
 # CONFIG_PACKAGE_libva is not set
 # CONFIG_PACKAGE_libvulkan-broadcom is not set
 # CONFIG_PACKAGE_libvulkan-imagination is not set
@@ -6212,7 +6213,7 @@ CONFIG_PACKAGE_libss=y
 # CONFIG_PACKAGE_libtasn1 is not set
 # CONFIG_PACKAGE_libteam is not set
 # CONFIG_PACKAGE_libteamdctl is not set
-CONFIG_PACKAGE_libtensorflowlite=y
+# CONFIG_PACKAGE_libtensorflowlite is not set
 # CONFIG_PACKAGE_libtheora is not set
 CONFIG_PACKAGE_libtiff=y
 # CONFIG_PACKAGE_libtins is not set

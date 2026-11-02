@@ -53,6 +53,22 @@ endef
 
 $(eval $(call KernelPackage,drm-rocket))
 
+define KernelPackage/drm-rknpu
+  SUBMENU:=$(VIDEO_MENU)
+  TITLE:=Rockchip NPU accelerator support
+  DEPENDS:=@TARGET_rockchip accel-support +kmod-drm-sched +kmod-drm-shmem-helper
+  KCONFIG:= \
+	CONFIG_DRM_ACCEL=y \
+	CONFIG_DRM_ACCEL_RKNPU
+  FILES:=$(LINUX_DIR)/drivers/accel/rknpu/rknpu.ko
+  AUTOLOAD:=$(call AutoProbe,rknpu)
+endef
+
+define KernelPackage/drm-rknpu/description
+  Compute acceleration driver for the Rockchip RKNN neural processing units.
+endef
+
+$(eval $(call KernelPackage,drm-rknpu))
 
 define KernelPackage/phy-rockchip-samsung-hdptx
   SUBMENU:=$(VIDEO_MENU)
