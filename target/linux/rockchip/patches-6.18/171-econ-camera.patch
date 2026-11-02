@@ -106,7 +106,7 @@ index 000000000000..3172594ead36
 +
 +#define CAM31_INIT_GPIOS
 +
-+#define DEBUG
++// #define DEBUG
 +
 +/* e-Con Proprietary Host Command Set */
 +enum cam31_mcu_cmd_id {
