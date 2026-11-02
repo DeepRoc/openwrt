@@ -34,7 +34,8 @@
 	    	  compatible = "shared-dma-pool";
 		  reusable;
 		  size = <0x0 0x10000000>; /* 256MB */
-		  linux,cma-default;
+                  alloc-ranges = <0x0 0x00000000 0x0 0xffffffff>; /* Clamp below 4GB */
+                  linux,cma-default;
 	    };
 	};
 
