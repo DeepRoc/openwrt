@@ -1733,10 +1733,10 @@ index 000000000000..3172594ead36
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
 new file mode 100644
-index 000000000000..52d5aca851d1
+index 000000000000..0ac2ed53f685
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam57.c
-@@ -0,0 +1,2637 @@
+@@ -0,0 +1,2649 @@
 +// SPDX-License-Identifier: GPL-2.0-only
 +/*
 + * Driver for eCon STURDeCAM57 containing oax4000 ISP connected to OmniVision ox05b1s sensor.
@@ -3077,7 +3077,8 @@ index 000000000000..52d5aca851d1
 +			return ret;
 +		if (val == OAX4000_STATUS_FINISH)
 +			return 0;
-+		if (val != OAX4000_STATUS_ONGOING)
++		if (val != OAX4000_STATUS_ONGOING &&
++		    val != OAX4000_STATUS_RESET)
 +			return val;
 +		usleep_range(1000, 2000);
 +	} while (time_before(jiffies, timeout));
@@ -3241,7 +3242,10 @@ index 000000000000..52d5aca851d1
 +		msleep(100);
 +		return 0;
 +	}
-+	return oax4000_check_cmd_status(cam);
++	ret = oax4000_check_cmd_status(cam);
++	if (ret > 0)
++		return ret == OAX4000_STATUS_TIMEOUT_ERR ? -ETIMEDOUT : -EIO;
++	return ret;
 +}
 +
 +static int cam57_sensor_rw(struct cam57_dev *cam, u16 reg, u8 *idata, u16 count, bool is_write)
@@ -4069,7 +4073,7 @@ index 000000000000..52d5aca851d1
 +		break;
 +	}
 +
-+	return 0;
++	return ret;
 +}
 +
 +static const struct v4l2_ctrl_ops cam57_ctrl_ops = {
@@ -4079,19 +4083,11 @@ index 000000000000..52d5aca851d1
 +static const struct v4l2_ctrl_config custom_ctrls[] = {
 +	{
 +		.ops = &cam57_ctrl_ops,
-+		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
-+		.name = "IR Auto Exposure",
-+		.type = V4L2_CTRL_TYPE_BOOLEAN,
-+		.min = 0,
-+		.max = 1,
-+		.step = 1,
-+		.def = 1,
-+	},
-+	{
-+		.ops = &cam57_ctrl_ops,
 +		.id = V4L2_CID_CUSTOM_EXPOSURE_ABSOLUTE_IR,
 +		.name = "IR Exposure Absolute",
 +		.type = V4L2_CTRL_TYPE_INTEGER,
++		/* Reapply exposure to commit a changed gain even when time is unchanged. */
++		.flags = V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
 +		.min = 1,
 +		.max = 0xFFFF,
 +		.step = 1,
@@ -4106,6 +4102,18 @@ index 000000000000..52d5aca851d1
 +		.max = 255,
 +		.step = 1,
 +		.def = 16,
++	},
++	{
++		.ops = &cam57_ctrl_ops,
++		.id = V4L2_CID_CUSTOM_EXPOSURE_AUTO_IR,
++		.name = "IR Auto Exposure",
++		.type = V4L2_CTRL_TYPE_BOOLEAN,
++		/* Apply auto after manual defaults, even if the cached value matches. */
++		.flags = V4L2_CTRL_FLAG_EXECUTE_ON_WRITE,
++		.min = 0,
++		.max = 1,
++		.step = 1,
++		.def = 1,
 +	},
 +	{
 +		.ops = &cam57_ctrl_ops,
@@ -4126,7 +4134,7 @@ index 000000000000..52d5aca851d1
 +
 +        if (list_empty(&hdl->ctrls)) {
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SATURATION,
-+				  0, 255, 1, 128);
++				  0, 10, 1, 7);
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_SHARPNESS,
 +				  0, 255, 1, 128);
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_BRIGHTNESS,
@@ -4141,9 +4149,13 @@ index 000000000000..52d5aca851d1
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_EXPOSURE_ABSOLUTE,
 +				  1, 0xFFFF, 1, 100);
 +
-+		v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
-+				       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
-+				       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++		/*
++		 * Tested firmware rejects the 50 Hz default (status 0x55).
++		 *
++		 * v4l2_ctrl_new_std_menu(hdl, &cam57_ctrl_ops, V4L2_CID_POWER_LINE_FREQUENCY,
++		 *                       V4L2_CID_POWER_LINE_FREQUENCY_60HZ, 0,
++		 *                       V4L2_CID_POWER_LINE_FREQUENCY_50HZ);
++		 */
 +
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
 +		v4l2_ctrl_new_std(hdl, &cam57_ctrl_ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
@@ -4171,7 +4183,6 @@ index 000000000000..52d5aca851d1
 +		dev_warn(&cam->client->dev, "Link lost...\n");
 +		cancel_delayed_work_sync(&cam->init_work);
 +		if (cam->initialized) {
-+			v4l2_ctrl_handler_free(&cam->ctrls);
 +			cam->initialized = false;
 +		}
 +        }
@@ -4348,8 +4359,9 @@ index 000000000000..52d5aca851d1
 +
 +	v4l2_subdev_cleanup(sd);
 +
++	v4l2_ctrl_handler_free(&cam->ctrls);
++
 +	if (cam->initialized) {
-+		v4l2_ctrl_handler_free(&cam->ctrls);
 +		oax4000_power_off(cam);
 +	}
 +
