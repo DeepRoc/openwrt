@@ -40,7 +40,7 @@ index 57cdd8dc96f6..01a299c8eefe 100644
  obj-$(CONFIG_VIDEO_GC0310) += gc0310.o
 diff --git a/drivers/media/i2c/econ-cam31.c b/drivers/media/i2c/econ-cam31.c
 new file mode 100644
-index 000000000000..3172594ead36
+index 000000000000..39ea6c5e3bc1
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam31.c
 @@ -0,0 +1,1687 @@
@@ -1092,7 +1092,7 @@ index 000000000000..3172594ead36
 +	int ret = 0;
 +
 +	if (!cam->initialized)
-+		return -EAGAIN;
++		return enable ? -EAGAIN : 0;
 +
 +	mutex_lock(&cam->lock);
 +
@@ -1733,7 +1733,7 @@ index 000000000000..3172594ead36
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/econ-cam57.c b/drivers/media/i2c/econ-cam57.c
 new file mode 100644
-index 000000000000..0ac2ed53f685
+index 000000000000..213640c03865
 --- /dev/null
 +++ b/drivers/media/i2c/econ-cam57.c
 @@ -0,0 +1,2649 @@
@@ -3784,7 +3784,7 @@ index 000000000000..0ac2ed53f685
 +	int ret = 0;
 +
 +	if (!cam->initialized)
-+		return -EAGAIN;
++		return enable ? -EAGAIN : 0;
 +
 +	if (cam->streaming == enable)
 +		return 0;

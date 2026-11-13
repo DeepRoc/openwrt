@@ -7310,10 +7310,10 @@ index 000000000000..bcee071778b0
 +MODULE_LICENSE("GPL");
 diff --git a/drivers/media/i2c/maxim-serdes/max_des.c b/drivers/media/i2c/maxim-serdes/max_des.c
 new file mode 100644
-index 000000000000..d1a7d4e5ddd4
+index 000000000000..dc8ff0b3bdca
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_des.c
-@@ -0,0 +1,3523 @@
+@@ -0,0 +1,3558 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Maxim GMSL2 Deserializer Driver
@@ -9840,6 +9840,23 @@ index 000000000000..d1a7d4e5ddd4
 +	if (ret)
 +		return ret;
 +
++	if (!enable) {
++		ret = max_des_enable_disable_streams(priv, state, pad,
++						     updated_streams_mask, false);
++		if (ret)
++			dev_info(priv->dev,
++				 "Ignoring downstream error during stream disable: %d\n", ret);
++
++		max_des_update_active(priv, streams_masks, false);
++		max_des_update_links(priv, &context, state, streams_masks);
++		max_des_update_tpg(priv, state, streams_masks);
++
++		devm_kfree(priv->dev, priv->streams_masks);
++		priv->streams_masks = streams_masks;
++
++		return 0;
++	}
++ 
 +	ret = max_des_set_pipes_phy(priv, &context);
 +	if (ret)
 +		goto err_free_streams_masks;
@@ -9863,8 +9880,19 @@ index 000000000000..d1a7d4e5ddd4
 +	if (!enable) {
 +		ret = max_des_enable_disable_streams(priv, state, pad,
 +						     updated_streams_mask, enable);
-+		if (ret)
-+			goto err_free_streams_masks;
++		if (ret) {
++			dev_info(priv->dev,
++				 "Ignoring downstream error during stream disable: %d\n", ret);
++
++			max_des_update_active(priv, streams_masks, false);
++			max_des_update_links(priv, &context, state, streams_masks);
++			max_des_update_tpg(priv, state, streams_masks);
++
++			devm_kfree(priv->dev, priv->streams_masks);
++			priv->streams_masks = streams_masks;
++
++			return 0;
++		}
 +	}
 +
 +	ret = max_des_update_active(priv, streams_masks, false);
@@ -10670,6 +10698,13 @@ index 000000000000..d1a7d4e5ddd4
 +
 +		if (was_locked && !is_locked) {
 +			dev_warn(priv->dev, "Link %u lock lost! Detaching...\n", link_id);
++			if (link->serializer) {
++				for (i = 0; i < link->num_xlates; i++) {
++					if (link->xlates[i].addr != link->powerup_addr)
++						max_ser_detach_addr(link->serializer, link_id,
++								    link->xlates[i].addr);
++				}
++			}
 +			link->ser_xlate.en = false;
 +			link->serializer = NULL;
 +			priv->active_links &= ~BIT(link_id);
@@ -11015,10 +11050,10 @@ index 000000000000..4e1449e238e7
 +#endif // MAX_DES_H
 diff --git a/drivers/media/i2c/maxim-serdes/max_ser.c b/drivers/media/i2c/maxim-serdes/max_ser.c
 new file mode 100644
-index 000000000000..39b21164e4c5
+index 000000000000..037392f475da
 --- /dev/null
 +++ b/drivers/media/i2c/maxim-serdes/max_ser.c
-@@ -0,0 +1,2342 @@
+@@ -0,0 +1,2362 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * Maxim GMSL2 Serializer Driver
@@ -11352,9 +11387,16 @@ index 000000000000..39b21164e4c5
 +	unsigned int i;
 +	int ret;
 +
-+	for (i = 0; i < ser->ops->num_i2c_xlates; i++)
-+		if (!ser->i2c_xlates[i].en)
++        for (i = 0; i < ser->ops->num_i2c_xlates; i++) {
++		if (ser->i2c_xlates[i].en && ser->i2c_xlates[i].dst == addr)
 +			break;
++	}
++
++	if (i == ser->ops->num_i2c_xlates) {
++		for (i = 0; i < ser->ops->num_i2c_xlates; i++)
++			if (!ser->i2c_xlates[i].en)
++				break;
++	}
 +
 +	if (i == ser->ops->num_i2c_xlates) {
 +		dev_err(priv->dev,
@@ -12401,10 +12443,22 @@ index 000000000000..39b21164e4c5
 +		return ret;
 +
 +	if (!enable) {
-+		ret = max_ser_enable_disable_streams(priv, state, pad,
-+						     updated_streams_mask, enable);
-+		if (ret)
-+			goto err_free_streams_masks;
++		/* Best-effort teardown: remote sensor/serializer may be unplugged */
++		max_ser_enable_disable_streams(priv, state, pad,
++					       updated_streams_mask, false);
++		max_ser_update_tpg(priv, state, streams_masks);
++		max_ser_update_phys(priv, state, streams_masks);
++
++		/* Always clear software state so future enable_streams succeeds */
++		devm_kfree(priv->dev, priv->streams_masks);
++		priv->streams_masks = streams_masks;
++		ser->active = false;
++		for (unsigned int i = 0; i < ser->ops->num_pipes; i++)
++			ser->pipes[i].enabled = false;
++		for (unsigned int i = 0; i < ser->ops->num_phys; i++)
++			ser->phys[i].active = false;
++
++		return 0;
 +	}
 +
 +	ret = max_ser_update_tpg(priv, state, streams_masks);
@@ -12439,7 +12493,6 @@ index 000000000000..39b21164e4c5
 +		max_ser_enable_disable_streams(priv, state, pad,
 +					       updated_streams_mask, !enable);
 +
-+err_free_streams_masks:
 +	devm_kfree(priv->dev, streams_masks);
 +
 +	return ret;
@@ -12519,7 +12572,9 @@ index 000000000000..39b21164e4c5
 +	remote_sd = media_entity_to_v4l2_subdev(remote_pad->entity);
 +	if (remote_sd && remote_sd->ops && remote_sd->ops->video &&
 +	    remote_sd->ops->video->s_stream) {
-+		return remote_sd->ops->video->s_stream(remote_sd, enable);
++		ret = remote_sd->ops->video->s_stream(remote_sd, enable);
++		if (enable)
++			return ret;
 +	}
 +
 +	return 0;
