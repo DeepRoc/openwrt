@@ -475,3 +475,14 @@ define KernelPackage/i2c-econ-cam57
 endef
 
 $(eval $(call KernelPackage,i2c-econ-cam57))
+
+I2C_OV9282_MODULES:= \
+  CONFIG_VIDEO_OV9282:drivers/media/i2c/ov9282
+
+define KernelPackage/i2c-ov9282
+  $(call i2c_defaults,$(I2C_OV9282_MODULES),52)
+  TITLE:=Interface to Omnivision ov9281/ov9282 camera
+  DEPENDS:=+kmod-i2c-core
+endef
+
+$(eval $(call KernelPackage,i2c-ov9282))

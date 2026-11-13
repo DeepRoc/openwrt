@@ -1,0 +1,99 @@
+Index: linux-6.18.55/drivers/media/i2c/ov9282.c
+===================================================================
+--- linux-6.18.55.orig/drivers/media/i2c/ov9282.c
++++ linux-6.18.55/drivers/media/i2c/ov9282.c
+@@ -17,6 +17,7 @@
+ #include <media/v4l2-event.h>
+ #include <media/v4l2-fwnode.h>
+ #include <media/v4l2-subdev.h>
++#include <media/mipi-csi2.h>
+ 
+ /* Streaming Mode */
+ #define OV9282_REG_MODE_SELECT	0x0100
+@@ -1189,6 +1190,28 @@ done_endpoint_free:
+ 	return ret;
+ }
+ 
++static int ov9282_get_frame_desc(struct v4l2_subdev *sd, unsigned int pad,
++                                 struct v4l2_mbus_frame_desc *fd)
++{
++    struct ov9282 *ov9282 = to_ov9282(sd);
++
++    if (pad != 0)
++        return -EINVAL;
++
++    memset(fd, 0, sizeof(*fd));
++    fd->type = V4L2_MBUS_FRAME_DESC_TYPE_CSI2;
++    fd->num_entries = 1;
++    fd->entry[0].stream = 0;
++    fd->entry[0].flags = V4L2_MBUS_FRAME_DESC_FL_LEN_MAX;
++    fd->entry[0].length = ov9282->cur_mode->width * ov9282->cur_mode->height;
++    fd->entry[0].pixelcode = ov9282->code;
++    fd->entry[0].bus.csi2.vc = 0;
++    fd->entry[0].bus.csi2.dt = (ov9282->code == MEDIA_BUS_FMT_Y8_1X8) ? 
++                                MIPI_CSI2_DT_RAW8 : MIPI_CSI2_DT_RAW10;
++
++    return 0;
++}
++
+ /* V4l2 subdevice ops */
+ static const struct v4l2_subdev_core_ops ov9282_core_ops = {
+ 	.subscribe_event = v4l2_ctrl_subdev_subscribe_event,
+@@ -1205,6 +1228,7 @@ static const struct v4l2_subdev_pad_ops
+ 	.get_fmt = ov9282_get_pad_format,
+ 	.set_fmt = ov9282_set_pad_format,
+ 	.get_selection = ov9282_get_selection,
++        .get_frame_desc = ov9282_get_frame_desc,
+ };
+ 
+ static const struct v4l2_subdev_ops ov9282_subdev_ops = {
+Index: linux-6.18.55/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
+===================================================================
+--- linux-6.18.55.orig/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
++++ linux-6.18.55/drivers/media/platform/rockchip/rkcif/rkcif-capture-mipi.c
+@@ -317,6 +317,17 @@ static const struct rkcif_output_fmt mip
+ 			.type = RKCIF_MIPI_TYPE_RAW12,
+ 		},
+ 	},
++        /* Greyscale / Monochrome formats */
++	{
++		.fourcc = V4L2_PIX_FMT_GREY,
++		.mbus_code = MEDIA_BUS_FMT_Y8_1X8,
++		.depth = 8,
++		.cplanes = 1,
++		.mipi = {
++			.dt = MIPI_CSI2_DT_RAW8,
++			.type = RKCIF_MIPI_TYPE_RAW8,
++		},
++	},
+ };
+ 
+ static const struct rkcif_input_fmt mipi_in_fmts[] = {
+@@ -377,6 +388,10 @@ static const struct rkcif_input_fmt mipi
+ 	{
+ 		.mbus_code = MEDIA_BUS_FMT_SRGGB12_1X12,
+ 	},
++        /* Greyscale / Monochrome formats */
++	{
++		.mbus_code = MEDIA_BUS_FMT_Y8_1X8,
++	},
+ };
+ 
+ static u32
+Index: linux-6.18.55/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+===================================================================
+--- linux-6.18.55.orig/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
++++ linux-6.18.55/drivers/media/platform/synopsys/dw-mipi-csi2rx.c
+@@ -291,6 +291,12 @@ static const struct dw_mipi_csi2rx_forma
+ 		.depth = 16,
+ 		.csi_dt = MIPI_CSI2_DT_RAW16,
+ 	},
++	/* RAW / Greyscale formats */
++	{
++		.code = MEDIA_BUS_FMT_Y8_1X8,
++		.depth = 8,
++		.csi_dt = MIPI_CSI2_DT_RAW8,
++	},
+ };
+ 
+ static inline struct dw_mipi_csi2rx_device *to_csi2(struct v4l2_subdev *sd)
